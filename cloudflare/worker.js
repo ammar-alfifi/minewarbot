@@ -196,7 +196,9 @@ async function handleApi(request, env, ctx, url) {
 
       if (resolved) {
         identity = { ...resolved.identity };
-        startParam = resolved.startParam;
+        // معرّف الدعوة قد يصل من initData أو من رابط الواجهة (?startapp=) —
+        // الواجهة ترسله في الجسم دائماً، فنقبله كاحتياط حتى لا تفشل إضافة الأصدقاء.
+        startParam = resolved.startParam || str(body?.startParam || url.searchParams.get('startapp'), 64) || null;
         if (identity.mode === 'guest') {
           const nick = str(body?.nickname, 20).replace(/[\u0000-\u001f]/g, '').trim();
           if (nick) identity.name = nick;

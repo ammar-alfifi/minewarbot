@@ -146,6 +146,24 @@ test('الدعوات تعيد رابطاً قابلاً للمشاركة', async
   assert.ok(data.code.startsWith('ref_'));
 });
 
+test('إضافة الأصدقاء تعمل عندما يصل معرّف الدعوة من رابط الواجهة لا من initData', async () => {
+  const inviter = makeInitData({ id: 4242, first_name: 'الداعي' });
+  const created = await post('/api/session', { initData: inviter });
+  assert.equal(created.status, 200);
+
+  // الصديق الجديد: initData بلا start_param، لكن الواجهة ترسل المعرّف في الجسم
+  const friend = makeInitData({ id: 4243, first_name: 'الصديق' });
+  const res = await post('/api/session', { initData: friend, startParam: 'ref_tg_4242' });
+  assert.equal(res.status, 200);
+  const data = await res.json();
+  assert.equal(data.player.playerId, 'tg_4243');
+  assert.equal(data.player.stats.friends, 1, 'الرابط يربط الصداقة حتى دون start_param في initData');
+
+  const state = await get('/api/state', { 'X-Init-Data': inviter });
+  const stateData = await state.json();
+  assert.equal(stateData.player.stats.friends, 1, 'الداعي يرى الصديق في رفاقه');
+});
+
 test('جلسة تيليجرام الموثقة تُشتق منها الهوية ولا يُقبل playerId من العميل', async () => {
   const initData = makeInitData({ id: 777, first_name: 'سالم' });
   const res = await post('/api/session', {

@@ -12,11 +12,12 @@ import { FakeD1, fakeAssets } from './helpers/fakeD1.js';
 const BOT_TOKEN = '123456789:AAtest-token-for-unit-tests-only-000000000';
 const ORIGIN = 'https://minewarrbot.example.workers.dev';
 
-function buildInitData(user = { id: 42, first_name: 'عمار' }) {
+function buildInitData(user = { id: 42, first_name: 'عمار' }, startParam = null) {
   const params = new URLSearchParams();
   params.set('auth_date', String(Math.floor(Date.now() / 1000)));
   params.set('query_id', 'AAExample');
   params.set('user', JSON.stringify(user));
+  if (startParam) params.set('start_param', startParam);
   const dataCheckString = [...params.entries()]
     .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
     .map(([k, v]) => `${k}=${v}`)
@@ -98,6 +99,25 @@ test('Worker: يرفض الطلبات بلا مصادقة', async () => {
   const session = await call(env, '/api/session', { method: 'POST' });
   assert.equal(session.status, 401);
   assert.equal(session.json.code, 'telegram_required');
+});
+
+test('Worker: إضافة الأصدقاء تعمل بمعرّف الدعوة من جسم الطلب (رابط ?startapp)', async () => {
+  const env = makeEnv();
+  await call(env, '/api/session', { method: 'POST', initData: buildInitData({ id: 101, first_name: 'الداعي' }) });
+
+  const friend = await call(env, '/api/session', {
+    method: 'POST',
+    initData: buildInitData({ id: 102, first_name: 'الصديق' }),
+    body: { startParam: 'ref_tg_101' },
+  });
+  assert.equal(friend.status, 200);
+  assert.equal(friend.json.player.stats.friends, 1);
+
+  const inviter = await call(env, '/api/session', {
+    method: 'POST',
+    initData: buildInitData({ id: 101, first_name: 'الداعي' }),
+  });
+  assert.equal(inviter.json.player.stats.friends, 1);
 });
 
 test('Worker: يحمي نقطة الـ webhook بالسر', async () => {

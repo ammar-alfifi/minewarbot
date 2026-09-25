@@ -5,7 +5,7 @@ import { num, short, duration } from '../format.js';
 import { useTick } from '../hooks/useGame.js';
 
 export default function Header({ game, onHelp, onOpenTab, onEditName }) {
-  const { player, catalog, mode, displayCoins, displayGems, busy } = game;
+  const { player, catalog, mode, displayCoins, displayGems } = game;
   if (!player) return null;
   const boostLeft = player.power.boostUntil - Date.now();
   const shieldLeft = player.raid.shieldUntil - Date.now();
@@ -16,7 +16,7 @@ export default function Header({ game, onHelp, onOpenTab, onEditName }) {
           <span>⛏️</span>
           <span>{t('appName')}</span>
         </div>
-        <span className="chip gold" title={num(displayCoins)}>{busy ? '…' : `🪙 ${short(displayCoins)}`}</span>
+        <span className="chip gold" title={num(displayCoins)}>🪙 {short(displayCoins)}</span>
         <span className="chip gem" title={num(displayGems)}>💎 {short(displayGems)}</span>
         <button className="icon-btn" onClick={onHelp} aria-label={t('header.help')} title={t('header.help')}>؟</button>
       </div>

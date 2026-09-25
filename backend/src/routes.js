@@ -105,7 +105,9 @@ export function createApiRoutes({ engine, config }) {
 
     if (resolved) {
       identity = { ...resolved.identity };
-      startParam = resolved.startParam;
+      // معرّف الدعوة قد يصل من initData أو من رابط الواجهة (?startapp=) —
+      // الواجهة ترسله في الجسم دائماً، فنقبله كاحتياط حتى لا تفشل إضافة الأصدقاء.
+      startParam = resolved.startParam || str(req.body?.startParam || req.query?.startapp, 64) || null;
       if (identity.mode === 'guest') {
         // اسم عرض اختياري للضيف (تطوير فقط)
         const nick = str(req.body?.nickname, 20).replace(/[\u0000-\u001f]/g, '').trim();

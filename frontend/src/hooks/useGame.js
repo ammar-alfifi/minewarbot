@@ -5,6 +5,10 @@ import { initTelegram, isTelegram, getStartParam, haptic } from '../telegram.js'
 
 let floatSeq = 0;
 
+// السيرفر يقبل 25 نقرة كحد أقصى في الطلب الواحد — نجمع النقرات محلياً ونجزّئها.
+const MAX_TAPS_PER_FLUSH = 25;
+const MAX_PENDING_TAPS = 40;
+
 export function useGame() {
   const [status, setStatus] = useState('loading');
   const [fatal, setFatal] = useState(null);
@@ -30,6 +34,13 @@ export function useGame() {
   const dismissedNotices = useRef(new Set());
   const modalRef = useRef(null);
   modalRef.current = modal;
+
+  // تحديث عدد النقرات غير المؤكّدة (يغذّي عدّاد العملات المتفائل).
+  const setPendingCount = useCallback((next) => {
+    pendingRef.current = Math.max(0, Math.min(MAX_PENDING_TAPS, Math.floor(next) || 0));
+    setPending(pendingRef.current);
+    return pendingRef.current;
+  }, []);
 
   const pushToast = useCallback((message, kind = '') => {
     const id = ++floatSeq;
@@ -130,34 +141,39 @@ export function useGame() {
 
   const flushTaps = useCallback(async () => {
     if (inFlight.current) return;
-    const count = pendingRef.current;
-    if (count <= 0) return;
-    pendingRef.current = 0;
-    setPending(0);
+    const total = pendingRef.current;
+    if (total <= 0) return;
+    const count = Math.min(total, MAX_TAPS_PER_FLUSH);
     inFlight.current = true;
     try {
       const res = await api.mine(count, newRequestId());
       applyServerState(res);
+      // نطرح ما أكّده السيرفر فقط — تبقى بقية النقرات ظاهرة فلا يهبط العدّاد.
+      setPendingCount(pendingRef.current - count);
     } catch (err) {
-      if (err instanceof ApiError && (err.code === 'network' || err.code === 'timeout')) {
-        // نُعيد النقرات غير المؤكدة للمحاولة التالية (بسقف معقول)
-        pendingRef.current = Math.min(30, pendingRef.current + count);
-        setPending(pendingRef.current);
-      } else if (err instanceof ApiError && err.status === 401) {
+      const retryable = err instanceof ApiError && ['network', 'timeout', 'mine_throttled', 'rate_limited'].includes(err.code);
+      if (err instanceof ApiError && err.status === 401) {
+        setPendingCount(0);
         recoverAuth();
-      } else if (!(err instanceof ApiError && (err.code === 'mine_throttled' || err.code === 'rate_limited'))) {
-        pushToast(err.message || 'تعذّر التعدين', 'error');
+      } else if (retryable) {
+        // الطلب لم يُنفَّذ — نُبقي النقرات لمحاولة تالية (بلا فقدان للعملات).
+      } else {
+        // خطأ غير قابل لإعادة المحاولة: نُسقط النقرات غير المؤكّدة (لم تُحتسب على السيرفر).
+        setPendingCount(pendingRef.current - count);
+        pushToast(err?.message || 'تعذّر التعدين', 'error');
       }
     } finally {
       inFlight.current = false;
       if (pendingRef.current > 0) scheduleFlush(350);
     }
-  }, [applyServerState, pushToast, recoverAuth, scheduleFlush]);
+  }, [applyServerState, pushToast, recoverAuth, scheduleFlush, setPendingCount]);
 
   const tap = useCallback((event, times = 1) => {
     const s = stateRef.current;
     if (!s || status !== 'ready') return;
-    pendingRef.current = Math.min(40, pendingRef.current + times);
+    const accepted = Math.min(times, MAX_PENDING_TAPS - pendingRef.current);
+    if (accepted <= 0) return;
+    pendingRef.current += accepted;
     setPending(pendingRef.current);
     haptic('light');
     const manual = s.power.manual;
@@ -170,7 +186,7 @@ export function useGame() {
         y = rect.top + rect.height * 0.25 + (Math.random() * 30 - 15);
       } catch {}
     }
-    spawnFloat(x, y, `+${manual * times}`, 'coins');
+    spawnFloat(x, y, `+${manual * accepted}`, 'coins');
     scheduleFlush(280);
   }, [status, scheduleFlush, spawnFloat]);
 
