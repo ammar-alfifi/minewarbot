@@ -1,0 +1,8 @@
+# مثال Caddyfile للاستضافة على VPS مع نطاق (يشمل HTTPS تلقائياً)
+# استبدل minewarr.example.com بنطاقك (يمكن استخدام DuckDNS مجاناً).
+# التشغيل: caddy run --config deploy/Caddyfile
+
+minewarr.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:3001
+}

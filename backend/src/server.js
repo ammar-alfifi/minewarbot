@@ -6,6 +6,7 @@ import dns from 'node:dns';
 import net from 'node:net';
 import { config, configSummary } from './config.js';
 import { createJsonStore } from './store.js';
+import { createSqliteStore } from './store.sqlite.js';
 import { createEngine } from './game/engine.js';
 import { createApp } from './app.js';
 import { createBot } from './bot.js';
@@ -16,7 +17,24 @@ import { logError } from './log.js';
 dns.setDefaultResultOrder('ipv4first');
 if (typeof net.setDefaultAutoSelectFamily === 'function') net.setDefaultAutoSelectFamily(false);
 
-const store = createJsonStore({ file: config.dataFile });
+/** اختيار طبقة التخزين حسب الإعداد، مع فشل واضح في الإنتاج عند تعذّر SQLite. */
+function createStore() {
+  if (config.storage === 'sqlite') {
+    try {
+      return createSqliteStore({ file: config.sqliteFile });
+    } catch (err) {
+      logError('❌ تعذّر تشغيل تخزين SQLite:', err);
+      if (config.isProd) {
+        console.error(`تأكد أن المسار ${config.sqliteFile} قابل للكتابة (قرص دائم) ثم أعد التشغيل.`);
+        process.exit(1);
+      }
+      console.error('ℹ️  وضع التطوير: سنستخدم تخزين JSON مؤقتاً.');
+    }
+  }
+  return createJsonStore({ file: config.dataFile });
+}
+
+const store = createStore();
 const engine = createEngine({ store, botUsername: config.botUsername });
 const app = createApp({ engine, config });
 
@@ -82,6 +100,8 @@ async function shutdown(signal) {
   try { bot?.stop(signal); } catch {}
   server.close();
   await store.idle();
+  // إغلاق قاعدة SQLite بلطف (checkpoint للـ WAL) إن كانت مستخدمة
+  try { store.close?.(); } catch {}
   process.exit(0);
 }process.once('SIGINT', () => shutdown('SIGINT'));
 process.once('SIGTERM', () => shutdown('SIGTERM'));

@@ -1,0 +1,33 @@
+# إعداد Fly.io — للتشغيل الدائم مع قرص دائم (Volume) للبيانات
+# الخطوات في DEPLOY.md. غيّر app إلى اسم فريد قبل النشر.
+
+app = "minewarr"
+primary_region = "fra"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3001"
+  SERVE_FRONTEND = "true"
+  TRUST_PROXY = "true"
+  STORAGE = "sqlite"
+  SQLITE_FILE = "/data/minewarr.db"
+  ALLOW_GUEST = "false"
+  BOT_USERNAME = "MineWarrBot"
+
+[[mounts]]
+  source = "minewarr_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3001
+  force_https = true
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"

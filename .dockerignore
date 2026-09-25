@@ -1,0 +1,17 @@
+node_modules
+**/node_modules
+frontend/dist
+backend/data
+backend/backups
+.git
+.gitignore
+.env
+**/.env
+**/.env.*
+!**/.env.example
+*.log
+coverage
+COLLAB_GUIDE.md
+GAME_PROMPT.md
+IDEAS.md
+DEPLOY.md

@@ -31,25 +31,29 @@ telegram-miniapp/
 │   │   ├── routes.js         # مسارات الـ API الرقيقة + المصادقة + حدود المعدل
 │   │   ├── auth.js           # التحقق من initData (HMAC) + توكنات الجلسة
 │   │   ├── config.js         # كل الإعدادات من متغيرات البيئة
-│   │   ├── store.js          # مستودع JSON بكتابة ذرّية (قابل للاستبدال بـ SQLite)
+│   │   ├── store.js          # مستودع JSON بكتابة ذرّية
+│   │   ├── store.sqlite.js   # مستودع SQLite (node:sqlite) بنفس الواجهة — للإنتاج
 │   │   ├── ratelimit.js      # حدود IP ودلاء نقر
 │   │   ├── bot.js            # /start /app /invite /stats /help
 │   │   └── game/
 │   │       ├── rules.js      # كل المعادلات والأرقام والمحتوى (مصدر واحد)
 │   │       └── engine.js     # منطق اللعب الرسمي (تعدين، شراء، غارة، ...)
-│   ├── test/                 # 46 اختباراً: قواعد، مصادقة، محرك، تكامل HTTP
-│   └── data/                 # مخزن JSON محلي (مستثنى من git)
+│   ├── scripts/backup.mjs    # تصدير/استيراد البيانات (JSON وSQLite)
+│   ├── test/                 # 56 اختباراً: قواعد، مصادقة، محرك، تخزين، تكامل HTTP
+│   └── data/                 # مخزن محلي (مستثنى من git)
 ├── frontend/                 # React 18 · Vite 5 · @twa-dev/sdk
 │   ├── src/
 │   │   ├── App.jsx           # الهيكل، التبويبات، الطبقات العائمة
 │   │   ├── hooks/useGame.js  # الجلسة، الحالة الرسمية، تجميع النقرات، الأوامر
-│   │   ├── components/       # المنجم، الترقيات، الأصدقاء، المجموعة، النوافذ
-│   │   ├── api.js            # عميل الـ API + توكن الجلسة
+│   │   ├── components/       # المنجم، الترقيات، الأصدقاء، المجموعة، الجولة، النوافذ
+│   │   ├── api.js            # عميل الـ API + توكن الجلسة (يحدد العنوان تلقائياً)
 │   │   ├── telegram.js       # غلاف SDK آمن مع تراجع رشيق
 │   │   ├── i18n.js           # نصوص الواجهة (بنية قابلة للغات إضافية)
 │   │   └── index.css         # نظام تصميم RTL مع ثيم تيليجرام
 │   └── scripts/render-smoke.mjs  # اختبار عرض الشاشات ببيانات حقيقية
-└── README.md · COLLAB_GUIDE.md · GAME_PROMPT.md · IDEAS.md
+├── Dockerfile · docker-compose.yml · fly.toml · render.yaml
+├── deploy/                   # خدمات systemd + Caddyfile
+└── README.md · DEPLOY.md · COLLAB_GUIDE.md · GAME_PROMPT.md · IDEAS.md
 ```
 
 ---
@@ -120,8 +124,10 @@ npm run dev:frontend
 
 | الأمر | ماذا يفحص |
 |---|---|
-| `npm test --prefix backend` | معادلات الاقتصاد، توقيع initData ورفض القديم/المعدّل، المحرك (تعدين/ترقية/غارة/درع/ثأر/سقف يومي/غياب/إنجازات/إحالات/ترحيل بيانات)، ومسارات HTTP كاملة |
-| `npm run test:render --prefix frontend` | يشغّل الباكند الحقيقي، ينشئ لاعباً ويلعب جولة، ثم يعرض كل الشاشات والنوافذ ببيانات فعلية للتأكد من سلامتها |
+| `npm test --prefix backend` | معادلات الاقتصاد، توقيع initData ورفض القديم/المعدّل، المحرك (تعدين/ترقية/غارة/درع/ثأر/سقف يومي/غياب/إنجازات/إحالات/ترحيل بيانات)، طبقتا التخزين (JSON وSQLite)، ومسارات HTTP كاملة |
+| `npm run test:render --prefix frontend` | يشغّل الباكند الحقيقي، ينشئ لاعباً ويلعب جولة، ثم يعرض كل الشاشات والنوافذ والجولة التعليمية ببيانات فعلية للتأكد من سلامتها |
+| `npm run backup --prefix backend` | نسخة احتياطية JSON لكل اللاعبين (تعمل مع JSON وSQLite) |
+| `npm run restore --prefix backend -- <ملف>` | استرجاع نسخة احتياطية |
 
 ---
 
@@ -138,7 +144,9 @@ npm run dev:frontend
 | `ALLOW_GUEST` | `true` خارج الإنتاج | وضع الضيف للتطوير |
 | `INIT_DATA_MAX_AGE_SEC` | `86400` | صلاحية `auth_date` قبل الرفض |
 | `SESSION_SECRET` | مشتق/عشوائي | توقيع توكنات الجلسة (ضعه في الإنتاج) |
-| `DATA_FILE` | `./data/players.json` | ملف التخزين |
+| `STORAGE` | `json` | `json` أو `sqlite` (موصى به مع قرص دائم) |
+| `SQLITE_FILE` | `./data/minewarr.db` | ملف قاعدة البيانات عند `STORAGE=sqlite` |
+| `DATA_FILE` | `./data/players.json` | ملف التخزين عند `STORAGE=json` |
 | `SERVE_FRONTEND` | `true` | خدمة `frontend/dist` من الباكند |
 | `TRUST_PROXY` | `true` في الإنتاج | قراءة IP الحقيقي خلف منصات النشر |
 
@@ -196,19 +204,17 @@ npm run dev:frontend
 
 ## ☁️ النشر
 
-**خيار 1 — خدمتان:**
-- الواجهة: Vercel من مجلد `frontend/` مع `VITE_API_URL=https://api.example.com`
-- الباكند: Render/Railway من `backend/` مع `BOT_TOKEN` و`NODE_ENV=production` و`ALLOWED_ORIGINS=https://your-app.vercel.app`
-- حدّث Menu Button في BotFather لرابط الواجهة.
+الدليل الكامل (Docker، Oracle Always Free، Fly.io، Render، نطاق ثابت، والنقل) في **[`DEPLOY.md`](./DEPLOY.md)**.
 
-**خيار 2 — خدمة واحدة (الأبسط):** انشر الباكند فقط مع بناء الواجهة:
+الخلاصة — Docker على أي سيرفر مع بيانات دائمة (SQLite) ورابط ثابت:
 ```bash
-npm run install:all && npm run build
-NODE_ENV=production node backend/src/server.js
+# أنشئ .env بجانب docker-compose.yml وضع BOT_TOKEN و FRONTEND_URL و SESSION_SECRET
+docker compose up -d --build
 ```
-سيخدم الباكند `frontend/dist` على نفس النطاق (لا حاجة لـ CORS).
+- الباكند يخدم الواجهة والـ API على نفس النطاق (`SERVE_FRONTEND=true`) → لا حاجة لإعداد CORS ولا مشاكل `localhost`.
+- البيانات في قرص دائم `/data` — نصيحة: استخدم نفق Cloudflare مُسمّى أو Caddy للحصول على HTTPS ثابت.
 
-> ملاحظة: التخزين JSON المحلي مناسب للـ MVP؛ كل الوصول يمر عبر `backend/src/store.js` فيمكن استبداله بـ SQLite/PostgreSQL دون تغيير قواعد اللعبة.
+> بديل بلا سيرفر: الباكند يخدم `frontend/dist`؛ يكفي `npm run build && node backend/src/server.js` على أي استضافة Node مع قرص دائم.
 
 ---
 

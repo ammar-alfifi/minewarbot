@@ -10,3 +10,11 @@ frontend/.env
 # قفل الاعتماديات موحّد في جذر المشروع (npm workspaces)
 backend/package-lock.json
 frontend/package-lock.json
+
+# بيانات اللعبة والنسخ الاحتياطية
+backend/backups/
+backend/data/*.db
+backend/data/*.db-wal
+backend/data/*.db-shm
+.env
+
