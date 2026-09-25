@@ -41,6 +41,8 @@
 
 > بديل عبر الأوامر (بـ Node محلي): `npx wrangler login` ثم `npx wrangler d1 create minewarr`، الصق المعرّف في `wrangler.toml` (فعّل كتلة `[[d1_databases]]`)، ثم `npm run cf:deploy`.
 
+> 🔁 **النشر التلقائي:** عند ربط الريبو من **Workers & Pages → مشروعك → Settings → Build → Connect to Git**، كل `push` إلى `main` يبني وينشر تلقائياً (Build: `npm ci && npm run build` — Deploy: `npx wrangler deploy`)، فلا حاجة لتشغيل `wrangler deploy` يدوياً.
+
 ### ج) اربط البوت بالـ webhook
 ```bash
 npm run webhook --prefix backend -- https://<اسم-مشروعك>.<حسابك>.workers.dev
