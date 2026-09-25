@@ -159,17 +159,45 @@ docker compose exec minewarr node scripts/backup.mjs import /tmp/backup.json
 
 ---
 
-## 6) بديل: إبقاء التشغيل على جهازك (systemd)
+## 6) بديل: تشغيل 24/7 على جهازك بلا أي حساب (نفق ذاتي التحديث)
+
+إن كان جهازك يبقى مشغّلاً (مكتبي/سيرفر منزلي)، هذا أسرع طريق — ونحن جعلناه لا يحتاج حساباً ولا نطاقاً:
+
+- النفق يغيّر رابط `*.trycloudflare.com` عند كل تشغيل، لذلك أضفنا **نفقاً ذاتي التحديث**:
+  يكتب الرابط الجديد في ملف يقرأه البوت، **ويحدّث زر القائمة في تيليجرام تلقائياً**.
 
 ```bash
-mkdir -p ~/.config/systemd/user ~/.local/share/minewarr
-cp deploy/minewarr-backend.service ~/.config/systemd/user/
+# 1) ثبّت cloudflared في مكان دائم
+mkdir -p ~/.local/bin ~/.local/share/minewarr ~/.config/systemd/user
+curl -L -o ~/.local/bin/cloudflared \
+  https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x ~/.local/bin/cloudflared
+
+# 2) ثبّت الخدمات (سيرفر + نفق)
+cp deploy/minewarr-backend.service deploy/minewarr-tunnel.service ~/.config/systemd/user/
 systemctl --user daemon-reload
-systemctl --user enable --now minewarr-backend
-loginctl enable-linger $USER          # ليعمل بعد تسجيل الخروج
+systemctl --user enable --now minewarr-backend minewarr-tunnel
+
+# 3) ليستمرا بعد تسجيل الخروج (قد يطلب كلمة المرور)
+sudo loginctl enable-linger $USER
+
+# 4) تحقّق
+systemctl --user status minewarr-backend minewarr-tunnel --no-pager
+tail -f ~/.local/share/minewarr/tunnel.log      # يظهر الرابط الجديد + تحديث زر القائمة
 ```
-- النفق الثابت: أعد الخطوات في القسم 1 ثم `cp deploy/minewarr-tunnel.service ~/.config/systemd/user/ && systemctl --user enable --now minewarr-tunnel`.
-- تذكّر: **نوم الجهاز يوقف كل شيء** — لهذا يُفضَّل النشر على سيرفر.
+
+ملاحظات:
+- **النوم يوقف كل شيء**: على اللابتوب، أوقف السكون عند إغلاق الغطاء (يحتاج sudo):
+  ```bash
+  sudo mkdir -p /etc/systemd/logind.conf.d
+  printf '[Login]\nHandleLidSwitch=ignore\nHandleLidSwitchExternalPower=ignore\n' | sudo tee /etc/systemd/logind.conf.d/minewarr.conf
+  sudo systemctl restart systemd-logind
+  ```
+  (على بعض الأجهزة: `sudo systemctl mask sleep.target suspend.target hibernate.target hybrid-sleep.target`)
+- لعرض الرابط الحالي:
+  `cat ~/.local/share/minewarr/public-url.txt`
+- إن أردت رابطاً ثابتاً تماماً مع نطاقك: استخدم النفق المُسمّى في القسم 1 بدل هذا القسم.
+- ملاحظة: `STORAGE=json` افتراضياً في هذه الوحدة (مناسب للجهاز نفسه)؛ للإنتاج على سيرفر استخدم SQLite كما هو موصى به أعلاه.
 
 ---
 
