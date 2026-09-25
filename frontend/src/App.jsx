@@ -9,10 +9,12 @@ import UpgradesTab from './components/UpgradesTab.jsx';
 import FriendsTab from './components/FriendsTab.jsx';
 import CollectionTab from './components/CollectionTab.jsx';
 import Modals from './components/Modals.jsx';
+import Tutorial from './components/Tutorial.jsx';
 
 export default function App() {
   const game = useGame();
   const [tab, setTab] = useState('mine');
+  const [tour, setTour] = useState(null); // { from } — الجولة التعليمية
 
   useEffect(() => {
     if (game.status !== 'ready') return;
@@ -32,6 +34,24 @@ export default function App() {
       friends: (game.raidLog.incoming || []).filter((e) => e.canRevenge).length,
     };
   }, [game.player, game.raidLog]);
+
+  // جولة أول دخول: تبدأ تلقائياً بعد إغلاق نافذة الترحيب، ويمكن إعادتها من «؟»
+  useEffect(() => {
+    if (game.status !== 'ready' || !game.player || tour) return;
+    if (game.player.tutorialDone) return;
+    try { if (localStorage.getItem('minewarr.tour.v1')) return; } catch {}
+    if (game.modal) return;
+    const timer = setTimeout(() => setTour({ from: tab }), 450);
+    return () => clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [game.status, game.player?.tutorialDone, game.modal, tour]);
+
+  const finishTour = (completed) => {
+    try { localStorage.setItem('minewarr.tour.v1', 'done'); } catch {}
+    setTab(completed ? 'mine' : (tour?.from || 'mine'));
+    setTour(null);
+    game.actions.tutorialDone();
+  };
 
   if (game.status === 'loading') {
     return (
@@ -100,7 +120,15 @@ export default function App() {
         ))}
       </div>
 
-      <Modals game={game} catalog={game.catalog} />
+      <Modals game={game} catalog={game.catalog} onStartTour={() => setTour({ from: tab })} />
+
+      {tour && (
+        <Tutorial
+          onFinish={() => finishTour(true)}
+          onSkip={() => finishTour(false)}
+          setTab={setTab}
+        />
+      )}
     </div>
   );
 }

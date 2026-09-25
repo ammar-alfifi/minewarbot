@@ -15,7 +15,7 @@ function Sheet({ children, wide = false, onClose }) {
 
 const RARITY_ORDER = { legendary: 4, epic: 3, rare: 2, common: 1 };
 
-export default function Modals({ game, catalog }) {
+export default function Modals({ game, catalog, onStartTour }) {
   const { modal, setModal, player, actions, pushToast, refreshBoard, refreshRaidLog, busy } = game;
   if (!modal || !player) return null;
   const close = () => setModal(null);
@@ -25,7 +25,7 @@ export default function Modals({ game, catalog }) {
       <Sheet onClose={close}>
         <div className="big-emoji">⛏️</div>
         <div className="head">{t('modals.welcome')}</div>
-        <div className="body">{t('modals.welcomeBody', { name: player.name })}</div>
+        <div className="body">{t('modals.welcomeBody', { name: player.name })}<br /><span className="small muted">بعد الإغلاق ستبدأ جولة تعليمية قصيرة — ويمكنك إعادتها من زر «؟».</span></div>
         <button className="btn primary big" onClick={close}>{t('modals.continue')}</button>
       </Sheet>
     );
@@ -215,7 +215,8 @@ export default function Modals({ game, catalog }) {
         <p className="card-sub">🎲 {t('help.odds')}</p>
         <p className="card-sub">💰 لا يوجد شراء حقيقي: الجواهر تُجمع باللعب فقط.</p>
         <p className="card-sub">🔒 {t('help.footer')}</p>
-        <button className="btn primary big" onClick={close}>{t('modals.close')}</button>
+        <button className="btn ghost big mt12" onClick={() => { close(); onStartTour?.(); }}>🎓 {t('tutorial.replay')}</button>
+        <button className="btn primary big mt8" onClick={close}>{t('modals.close')}</button>
       </Sheet>
     );
   }

@@ -11,7 +11,7 @@ export default function Header({ game, onHelp, onOpenTab, onEditName }) {
   const shieldLeft = player.raid.shieldUntil - Date.now();
   return (
     <header className="topbar">
-      <div className="topbar-row">
+      <div className="topbar-row" data-tour="resources">
         <div className="topbar-title">
           <span>⛏️</span>
           <span>{t('appName')}</span>

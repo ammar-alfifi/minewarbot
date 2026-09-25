@@ -295,6 +295,18 @@ test('الصندوق الجماعي يُمنح تلقائياً للمساهمي
   assert.equal(state2.player.gems, 3, 'الصندوق مرة واحدة في الأسبوع');
 });
 
+test('الجولة التعليمية: تظهر مرة واحدة وتُسجَّل على السيرفر', async () => {
+  const { engine } = setup();
+  const s = await engine.session(who('tg_1'));
+  assert.equal(s.player.tutorialDone, false, 'لاعب جديد يرى الجولة');
+  const done = await engine.completeTutorial('tg_1', 'req_tour_01');
+  assert.equal(done.player.tutorialDone, true);
+  const again = await engine.getState('tg_1');
+  assert.equal(again.player.tutorialDone, true, 'لا تظهر تلقائياً بعد الإكمال');
+  const replay = await engine.completeTutorial('tg_1', 'req_tour_01');
+  assert.equal(replay.replayed, true, 'إعادة الطلب لا تُنفَّذ مرتين');
+});
+
 test('مكافآت الهدف الجماعي تُطالب حسب المساهمة', async () => {
   const { engine, store, clock } = setup();
   await engine.session(who('tg_1'));

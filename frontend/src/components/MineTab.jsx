@@ -39,7 +39,7 @@ export default function MineTab({ game }) {
         </div>
       )}
 
-      <div className="card tight">
+      <div className="card tight" data-tour="region-card">
         <div className="between">
           <div className="flex">
             <span style={{ fontSize: 26 }}>{player.region.emoji}</span>
@@ -58,6 +58,7 @@ export default function MineTab({ game }) {
           onClick={(e) => game.tap(e)}
           aria-label={t('mine.tap')}
           title={t('mine.tapHint')}
+          data-tour="mine-btn"
         >
           <span style={{ display: 'grid', placeItems: 'center' }}>
             <span>⛏️</span>
@@ -74,7 +75,7 @@ export default function MineTab({ game }) {
       </div>
 
       <div className="flex mt12" style={{ gap: 8 }}>
-        <button className="btn primary grow" onClick={onDaily} disabled={!dailyReady || busy}>
+        <button className="btn primary grow" onClick={onDaily} disabled={!dailyReady || busy} data-tour="daily-btn">
           {dailyReady ? `🕳️ ${t('mine.dailyReady')}` : `🕳️ ${t('mine.dailyWait')} — ${duration(player.daily.availableAt - Date.now())}`}
         </button>
         <button

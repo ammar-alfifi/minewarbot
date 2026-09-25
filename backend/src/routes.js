@@ -190,6 +190,13 @@ export function createApiRoutes({ engine, config }) {
     return engine.clearNotices(identity.playerId, ids);
   }));
 
+  // ---- الجولة التعليمية (تُسجَّل مرة، ويمكن إعادتها من الواجهة) --------------
+  router.post('/actions/tutorial', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.completeTutorial(identity.playerId, str(req.body?.requestId, 64) || null);
+  }));
+
   // ---- لوحة الصدارة --------------------------------------------------------
   router.get('/leaderboard', safe(async (req) => {
     const { identity } = requireIdentity(req);

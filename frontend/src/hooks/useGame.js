@@ -233,6 +233,7 @@ export function useGame() {
         if (res.player) { setPlayer(res.player); stateRef.current = res.player; }
       } catch {}
     },
+    tutorialDone: () => run(() => api.tutorialDone(newRequestId()), { silentErrors: true, hapticKind: 'light' }),
   }), [run]);
 
   const refreshBoard = useCallback(async (scope = board.scope) => {

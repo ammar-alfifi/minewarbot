@@ -121,7 +121,7 @@ export default function CollectionTab({ game, catalog }) {
         ))}
       </div>
 
-      <div className="card">
+      <div className="card" data-tour="relics">
         <h3 className="card-title">🏺 {t('collection.relics')}</h3>
         {player.relics.length === 0 && <p className="muted small">{t('collection.empty')}</p>}
         {catalog.regions.map((region) => {
