@@ -82,19 +82,29 @@ npm run dev:frontend
 افتح `http://localhost:5173` في المتصفح → ستدخل **وضع الضيف** تلقائياً (واضح وموسوم) لتجربة كل شيء بدون تيليجرام.
 
 ### 4) التجربة داخل تيليجرام (HTTPS مطلوب)
-```bash
-ngrok http 5173
-# انسخ رابط https وضعه في BotFather:
-#   /mybots → اختر البوت → Bot Settings → Menu Button → Configure menu button
-```
-واكتب في `backend/.env`:
-```
-FRONTEND_URL=https://xxxx.ngrok-free.app
-ALLOWED_ORIGINS=https://xxxx.ngrok-free.app
-```
-ثم افتح البوت `@MineWarrBot` واضغط **⛏️ افتح المنجم**.
 
-> إنتاجاً: يمكن للباكند خدمة الواجهة المبنية من نفس السيرفر (`SERVE_FRONTEND=true`) — يبني `frontend/dist` تلقائياً عند توفرها.
+أسهل طريقة بدون حساب: نفق Cloudflare مؤقت يخدم نفس الباكند (الذي يقدّم الواجهة المبنية أيضاً):
+```bash
+npm run build
+node backend/src/server.js          # أو npm run dev:backend
+
+# في نافذة أخرى: نفق HTTPS مؤقت مجاني
+curl -L -o cloudflared https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64
+chmod +x cloudflared
+./cloudflared tunnel --url http://localhost:3001
+# انسخ الرابط الظاهر https://xxxx.trycloudflare.com
+```
+ثم حدّث في `backend/.env`:
+```
+FRONTEND_URL=https://xxxx.trycloudflare.com
+ALLOWED_ORIGINS=https://xxxx.trycloudflare.com,http://localhost:5173
+```
+وأعد تشغيل الباكند، واضبط زر القائمة في BotFather (`/mybots` → Bot Settings → Menu Button) أو تلقائياً عبر:
+```bash
+curl "https://api.telegram.org/bot<TOKEN>/setChatMenuButton" -H 'Content-Type: application/json' \
+  -d '{"menu_button":{"type":"web_app","text":"⛏️ المنجم","web_app":{"url":"https://xxxx.trycloudflare.com"}}}'
+```
+> النفق المؤقت يتغير رابطه عند كل تشغيل؛ للإنتاج استخدم نطاقاً ثابتاً (Vercel/Render). بديل آخر: `ngrok http 3001`.
 
 ---
 

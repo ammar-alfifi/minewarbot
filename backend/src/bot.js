@@ -8,11 +8,17 @@ import { logError } from './log.js';
 
 const REFERRAL_PREFIX = 'ref_';
 
+function isHttps(url) {
+  return /^https:\/\//i.test(url || '');
+}
+
 function appButton(frontendUrl, payload, label = '⛏️ افتح المنجم') {
   const url = payload
     ? `${frontendUrl}/?startapp=${encodeURIComponent(payload)}`
     : frontendUrl;
-  return Markup.button.webApp(label, url);
+  // أزرار Web App تتطلب HTTPS؛ خارج ذلك نعرض زر رابط عادي بدل فشل الطلب
+  if (isHttps(url)) return Markup.button.webApp(label, url);
+  return Markup.button.url(`${label} (وضع المتصفح)`, url);
 }
 
 export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', engine = null }) {
@@ -23,6 +29,9 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
     const refLine = payload?.startsWith(REFERRAL_PREFIX)
       ? '\n🎁 دعوة من صديق: ستحصل على جواهر ترحيبية عند أول دخول!'
       : '';
+    const httpsNote = isHttps(frontendUrl)
+      ? ''
+      : '\n\n⚠️ الرابط الحالي للتطوير المحلي — افتح اللعبة في المتصفح أو شغّل نفق HTTPS (cloudflared/ngrok) لتعمل داخل تيليجرام.';
     return [
       `أهلاً ${name}! ⛏️`,
       '',
@@ -32,6 +41,7 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
       '• اكتشف الجواهر والآثار النادرة',
       '• نافس أصدقاءك واغزُ خزائنهم (بأدب!)',
       refLine,
+      httpsNote,
     ].join('\n');
   };
 
