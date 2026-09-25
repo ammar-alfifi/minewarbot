@@ -9,6 +9,7 @@
     "start:sqlite": "STORAGE=sqlite node src/server.js",
     "backup": "node scripts/backup.mjs export",
     "restore": "node scripts/backup.mjs import",
+    "webhook": "node scripts/set-webhook.mjs",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

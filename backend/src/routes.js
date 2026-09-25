@@ -91,9 +91,10 @@ export function createApiRoutes({ engine, config }) {
   });
 
   // ---- صحة الخدمة ----------------------------------------------------------
-  router.get('/health', (req, res) => {
-    res.json({ ok: true, time: new Date().toISOString(), ...engine.stats() });
-  });
+  router.get('/health', safe(async () => ({
+    time: new Date().toISOString(),
+    ...(await engine.stats()),
+  })));
 
   // ---- الجلسة --------------------------------------------------------------
   router.post('/session', safe(async (req) => {

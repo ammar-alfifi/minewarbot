@@ -98,6 +98,12 @@ export function createSqliteStore({ file }) {
     read() {
       return doc;
     },
+    get(playerId) {
+      return doc.players[playerId] || null;
+    },
+    snapshot() {
+      return doc;
+    },
     mutate(fn, { persist: doPersist = true } = {}) {
       return runExclusive(async () => {
         const result = await fn(doc);

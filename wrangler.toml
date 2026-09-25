@@ -1,0 +1,30 @@
+# ============================================================================
+# إعداد Cloudflare Workers — استضافة مجانية 24/7 بلا سيرفر وبلا جهازك.
+# الـ Worker يقدّم: الواجهة المبنية + الـ API + webhook البوت من أصل واحد.
+# الأسرار (BOT_TOKEN, SESSION_SECRET, WEBHOOK_SECRET, ADMIN_SECRET) تُضبط من
+# لوحة Cloudflare أو بأمر: npx wrangler secret put BOT_TOKEN
+# ============================================================================
+
+name = "minewarrbot"
+main = "cloudflare/worker.js"
+compatibility_date = "2026-09-01"
+
+# الواجهة المبنية (frontend/dist) تُخدَم مباشرة من الـ Worker نفسه.
+[assets]
+directory = "./frontend/dist"
+binding = "ASSETS"
+not_found_handling = "none"
+
+[vars]
+BOT_USERNAME = "MineWarrBot"
+INIT_DATA_MAX_AGE_SEC = "86400"
+# APP_URL = "https://minewarrbot.<your-subdomain>.workers.dev"
+# ALLOWED_ORIGINS = "https://minewarrbot.<your-subdomain>.workers.dev,http://localhost:5173"
+# ALLOW_GUEST = "true"   # للتطوير المحلي فقط؛ اتركها معطّلة في الإنتاج
+
+# قاعدة البيانات D1: أنشئها أولاً ثم الصق المعرّف:
+#   npx wrangler d1 create minewarr
+# [[d1_databases]]
+# binding = "DB"
+# database_name = "minewarr"
+# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"

@@ -39,8 +39,15 @@ telegram-miniapp/
 │   │       ├── rules.js      # كل المعادلات والأرقام والمحتوى (مصدر واحد)
 │   │       └── engine.js     # منطق اللعب الرسمي (تعدين، شراء، غارة، ...)
 │   ├── scripts/backup.mjs    # تصدير/استيراد البيانات (JSON وSQLite)
-│   ├── test/                 # 56 اختباراً: قواعد، مصادقة، محرك، تخزين، تكامل HTTP
+│   ├── scripts/set-webhook.mjs # ضبط webhook البوت وزر القائمة لأي رابط HTTPS
+│   ├── test/                 # 75 اختباراً: قواعد، مصادقة، محرك، تخزين، D1، Worker، تكامل HTTP
 │   └── data/                 # مخزن محلي (مستثنى من git)
+├── cloudflare/               # نشر 24/7 مجاني بلا سيرفر: Worker + D1 (webhook البوت)
+│   ├── worker.js             # يخدم الواجهة + API + webhook من أصل واحد
+│   ├── store.d1.js           # تخزين D1 بكتابة ذرّية (rev/CAS)
+│   ├── auth.js · crypto.js   # initData + توكنات الجلسة عبر Web Crypto
+│   └── telegram.js           # أوامر البوت عبر Telegram Bot API
+├── wrangler.toml             # إعداد Cloudflare Workers
 ├── frontend/                 # React 18 · Vite 5 · @twa-dev/sdk
 │   ├── src/
 │   │   ├── App.jsx           # الهيكل، التبويبات، الطبقات العائمة
@@ -109,22 +116,24 @@ ALLOWED_ORIGINS=https://xxxx.trycloudflare.com,http://localhost:5173
 curl "https://api.telegram.org/bot<TOKEN>/setChatMenuButton" -H 'Content-Type: application/json' \
   -d '{"menu_button":{"type":"web_app","text":"⛏️ المنجم","web_app":{"url":"https://xxxx.trycloudflare.com"}}}'
 ```
-> النفق المؤقت يتغير رابطه عند كل تشغيل؛ للإنتاج استخدم نطاقاً ثابتاً (Vercel/Render). بديل آخر: `ngrok http 3001`.
+> النفق المؤقت يتغير رابطه عند كل تشغيل؛ للإنتاج استخدم Cloudflare Workers أو نطاقاً ثابتاً (انظر `DEPLOY.md`). بديل آخر: `ngrok http 3001`.
 
 ---
 
 ## 🧪 الأوامر والاختبارات
 
 ```bash
-npm test            # كل الاختبارات: الباكند (46) + عرض الواجهة (SSR)
+npm test            # كل الاختبارات: الباكند (75) + عرض الواجهة (SSR)
 npm run build       # بناء واجهة الإنتاج
 npm run dev:backend # تشغيل الباكند + البوت (polling)
 npm run dev:frontend
+npm run cf:dry      # تحقّق من بناء Cloudflare Worker دون نشر
+npm run cf:deploy   # نشر على Cloudflare Workers
 ```
 
 | الأمر | ماذا يفحص |
 |---|---|
-| `npm test --prefix backend` | معادلات الاقتصاد، توقيع initData ورفض القديم/المعدّل، المحرك (تعدين/ترقية/غارة/درع/ثأر/سقف يومي/غياب/إنجازات/إحالات/ترحيل بيانات)، طبقتا التخزين (JSON وSQLite)، ومسارات HTTP كاملة |
+| `npm test --prefix backend` | معادلات الاقتصاد، توقيع initData ورفض القديم/المعدّل، المحرك (تعدين/ترقية/غارة/درع/ثأر/سقف يومي/غياب/إنجازات/إحالات/ترحيل بيانات)، طبقتا التخزين (JSON وSQLite)، مستودع D1 ومحوّل Cloudflare Worker (تكامل كامل)، ومسارات HTTP |
 | `npm run test:render --prefix frontend` | يشغّل الباكند الحقيقي، ينشئ لاعباً ويلعب جولة، ثم يعرض كل الشاشات والنوافذ والجولة التعليمية ببيانات فعلية للتأكد من سلامتها |
 | `npm run backup --prefix backend` | نسخة احتياطية JSON لكل اللاعبين (تعمل مع JSON وSQLite) |
 | `npm run restore --prefix backend -- <ملف>` | استرجاع نسخة احتياطية |
@@ -150,6 +159,8 @@ npm run dev:frontend
 | `DATA_FILE` | `./data/players.json` | ملف التخزين عند `STORAGE=json` |
 | `SERVE_FRONTEND` | `true` | خدمة `frontend/dist` من الباكند |
 | `TRUST_PROXY` | `true` في الإنتاج | قراءة IP الحقيقي خلف منصات النشر |
+
+> على **Cloudflare Workers** لا يوجد ملف `.env`؛ تُضبط المتغيرات والأسرار من لوحة Cloudflare أو `wrangler secret put`: `BOT_TOKEN`, `SESSION_SECRET`, `WEBHOOK_SECRET`, `ADMIN_SECRET`، والمتغيرات `BOT_USERNAME`, `APP_URL`, `ALLOWED_ORIGINS` (انظر `DEPLOY.md`).
 
 ---
 
@@ -205,9 +216,20 @@ npm run dev:frontend
 
 ## ☁️ النشر
 
-الدليل الكامل (Docker، Oracle Always Free، Fly.io، Render، نطاق ثابت، والنقل) في **[`DEPLOY.md`](./DEPLOY.md)**.
+الدليل الكامل (Cloudflare Workers، Docker، Oracle Always Free، Fly.io، Render، نطاق ثابت، والنقل) في **[`DEPLOY.md`](./DEPLOY.md)**.
 
-الخلاصة — Docker على أي سيرفر مع بيانات دائمة (SQLite) ورابط ثابت:
+### ⭐ الأسرع والأرخص: Cloudflare Workers + D1 (0$ بلا بطاقة وبلا سيرفر)
+الواجهة + الـ API + **webhook البوت** في Worker واحد، والتخزين في D1. لا نوم ولا جهاز مفتوح:
+```bash
+npx wrangler login
+npx wrangler d1 create minewarr          # الصق المعرّف في wrangler.toml
+npx wrangler secret put BOT_TOKEN        # وكذا SESSION_SECRET و WEBHOOK_SECRET
+npm run cf:deploy
+npm run webhook --prefix backend -- https://<مشروعك>.<حسابك>.workers.dev
+```
+> خطوات اللوحة (بدون أوامر) في `DEPLOY.md`. ربط D1 باسم `DB` ضروري.
+
+### أو Docker على أي سيرفر (بيانات دائمة SQLite) ورابط ثابت
 ```bash
 # أنشئ .env بجانب docker-compose.yml وضع BOT_TOKEN و FRONTEND_URL و SESSION_SECRET
 docker compose up -d --build
@@ -215,7 +237,7 @@ docker compose up -d --build
 - الباكند يخدم الواجهة والـ API على نفس النطاق (`SERVE_FRONTEND=true`) → لا حاجة لإعداد CORS ولا مشاكل `localhost`.
 - البيانات في قرص دائم `/data` — نصيحة: استخدم نفق Cloudflare مُسمّى أو Caddy للحصول على HTTPS ثابت.
 
-> بديل بلا سيرفر: الباكند يخدم `frontend/dist`؛ يكفي `npm run build && node backend/src/server.js` على أي استضافة Node مع قرص دائم.
+> بديل بلا سيرفر تماماً: **Cloudflare Workers + D1** (`cloudflare/`) — الواجهة والـ API والبوت في Worker واحد، بلا نفق وبلا خادم.
 
 ---
 
