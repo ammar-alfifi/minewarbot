@@ -3,6 +3,7 @@
 // ============================================================================
 
 import dns from 'node:dns';
+import net from 'node:net';
 import { config, configSummary } from './config.js';
 import { createJsonStore } from './store.js';
 import { createEngine } from './game/engine.js';
@@ -10,8 +11,10 @@ import { createApp } from './app.js';
 import { createBot } from './bot.js';
 import { logError } from './log.js';
 
-// بعض بيئات الاستضافة لا تدعم IPv6؛ تفضيل IPv4 يجعل اتصال البوت بتيليجرام موثوقاً.
+// بعض بيئات الاستضافة لا تدعم IPv6: نفضّل IPv4 ونوقف محاولة IPv6 الأولى،
+// وإلا تفشل اتصالات البوت بتيليجرام رغم أن الشبكة تعمل (ETIMEDOUT/ENETUNREACH).
 dns.setDefaultResultOrder('ipv4first');
+if (typeof net.setDefaultAutoSelectFamily === 'function') net.setDefaultAutoSelectFamily(false);
 
 const store = createJsonStore({ file: config.dataFile });
 const engine = createEngine({ store, botUsername: config.botUsername });
