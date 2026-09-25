@@ -1,7 +1,26 @@
 // عميل الـ API — يرفق هوية تيليجرام أو توكن الضيف مع كل طلب.
 import { getInitData } from './telegram.js';
 
-const API_BASE = (import.meta.env.VITE_API_URL || 'http://localhost:3001').replace(/\/+$/, '');
+/** يحدد عنوان الـ API حسب بيئة التشغيل:
+ *  - VITE_API_URL إن وُجد (نشر الواجهة منفصلة).
+ *  - تطوير Vite (منفذ 5173/4173) → الباكند على المنفذ 3001.
+ *  - غير ذلك → نفس أصل الصفحة (الباكند يقدّم الواجهة، ويعمل خلف أي نطاق/نفق). */
+function resolveApiBase() {
+  const configured = import.meta.env.VITE_API_URL;
+  if (configured && String(configured).trim()) return String(configured).trim().replace(/\/+$/, '');
+  try {
+    const loc = window.location;
+    if (/^https?:$/.test(loc.protocol)) {
+      if (loc.port === '5173' || loc.port === '4173') {
+        return `${loc.protocol}//${loc.hostname}:3001`;
+      }
+      return loc.origin;
+    }
+  } catch {}
+  return 'http://localhost:3001';
+}
+
+const API_BASE = resolveApiBase();
 const TOKEN_KEY = 'minewarr.session.v1';
 const LEGACY_GUEST_KEY = 'minewarr.guest.v1';
 const NICK_KEY = 'minewarr.nick.v1';
