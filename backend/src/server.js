@@ -30,9 +30,21 @@ try {
 }
 
 if (bot) {
-  bot.launch()
-    .then(() => console.log(`🤖 البوت @${config.botUsername} يعمل (polling)`))
-    .catch((err) => logError('⚠️  فشل تشغيل البوت — تأكد من BOT_TOKEN:', err));
+  // إعادة محاولة عند فشل الشبكة (متكرر على بعض بيئات الاستضافة) مع تراجع تدريجي
+  let botAttempt = 0;
+  const launchBot = async () => {
+    try {
+      await bot.launch();
+      botAttempt = 0;
+      console.log(`🤖 البوت @${config.botUsername} يعمل (polling)`);
+    } catch (err) {
+      botAttempt += 1;
+      const delayMs = Math.min(60_000, 5_000 * botAttempt);
+      logError(`⚠️  فشل تشغيل البوت (محاولة ${botAttempt}) — إعادة المحاولة خلال ${Math.round(delayMs / 1000)} ث:`, err);
+      setTimeout(launchBot, delayMs);
+    }
+  };
+  launchBot();
 } else {
   console.log('ℹ️  البوت معطّل (لا يوجد BOT_TOKEN صالح) — الـ API يعمل للتطوير.');
 }
@@ -46,6 +58,5 @@ async function shutdown(signal) {
   server.close();
   await store.idle();
   process.exit(0);
-}
-process.once('SIGINT', () => shutdown('SIGINT'));
+}process.once('SIGINT', () => shutdown('SIGINT'));
 process.once('SIGTERM', () => shutdown('SIGTERM'));
