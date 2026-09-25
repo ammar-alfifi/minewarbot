@@ -1,6 +1,8 @@
 // الجولة التعليمية: تظهر عند أول دخول وتُعاد من زر «؟».
 // تُبرز العناصر الفعلية (spotlight) مع بطاقة شرح، وتنتقل بين التبويبات تلقائياً.
-import React, { useCallback, useEffect, useState } from 'react';
+// ملاحظة تصميم: البطاقة دائماً داخل حدود الشاشة (لا تعتمد على موضع قد يكون خارجها)،
+// مع زر خروج ثابت يضمن عدم "التعلّق" في أي حالة.
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { t } from '../i18n.js';
 
 export const TUTORIAL_STEPS = [
@@ -15,67 +17,110 @@ export const TUTORIAL_STEPS = [
 ];
 
 const PAD = 8;
+const CARD_EST_HEIGHT = 250; // ارتفاع تقديري للبطاقة لاختيار موضع آمن
+const EDGE = 12;
+
+function viewportHeight() {
+  return typeof window !== 'undefined' ? window.innerHeight || 800 : 800;
+}
+
+/** موضع البطاقة: أسفل العنصر إن وُجد متسع، ثم أعلاه، وإلا ملتصقة بأسفل الشاشة — دائماً داخل الشاشة. */
+export function cardTopFor(rect) {
+  const vh = viewportHeight();
+  const safeMax = Math.max(EDGE, vh - CARD_EST_HEIGHT - EDGE);
+  if (!rect) return null;
+  const spaceBelow = vh - (rect.top + rect.height);
+  const spaceAbove = rect.top;
+  if (spaceBelow >= CARD_EST_HEIGHT + 24) return Math.max(EDGE, Math.min(rect.top + rect.height + PAD + 16, safeMax));
+  if (spaceAbove >= CARD_EST_HEIGHT + 24) return Math.max(EDGE, Math.min(rect.top - PAD - 16 - CARD_EST_HEIGHT, safeMax));
+  return safeMax; // ملتصقة بأسفل الشاشة
+}
+
+/** بقعة الضوء داخل حدود الشاشة المرئية فقط. */
+export function spotStyleFor(rect) {
+  if (!rect) return null;
+  const vh = viewportHeight();
+  const top = Math.max(0, rect.top - PAD);
+  const left = Math.max(0, rect.left - PAD);
+  const height = Math.max(24, Math.min(rect.height + PAD * 2, vh - top - PAD));
+  return {
+    position: 'fixed',
+    top,
+    left,
+    width: Math.max(24, rect.width + PAD * 2),
+    height,
+    borderRadius: 18,
+    border: '2px solid var(--gold)',
+    boxShadow: '0 0 0 9999px rgba(0,0,0,0.74)',
+    pointerEvents: 'none',
+    zIndex: 130,
+  };
+}
 
 export default function Tutorial({ onFinish, onSkip, setTab }) {
   const [index, setIndex] = useState(0);
   const [rect, setRect] = useState(null);
   const step = TUTORIAL_STEPS[index];
   const last = index === TUTORIAL_STEPS.length - 1;
+  const rectRef = useRef(null);
 
   // ننتقل للتبويب المناسب لكل خطوة
   useEffect(() => {
     if (setTab) setTab(step.tab);
   }, [index, step.tab, setTab]);
 
-  // إبراز العنصر المستهدف مع إعادة القياس عند تغيّر المقاس أو محتوى الصفحة
+  // قياس العنصر المستهدف: تمرير إليه ثم قياس مع إعادة محاولة، ومتابعة التمرير
   useEffect(() => {
     let cancelled = false;
     let tries = 0;
     const timers = [];
+    let raf = 0;
+    const update = () => {
+      if (typeof requestAnimationFrame !== 'function') return measureNow();
+      if (raf) return;
+      raf = requestAnimationFrame(() => { raf = 0; measureNow(); });
+    };
+    const measureNow = () => {
+      const el = rectRef.current;
+      if (!el) return;
+      const r = el.getBoundingClientRect();
+      setRect(r.width > 0 && r.height > 0
+        ? { top: r.top, left: r.left, width: r.width, height: r.height }
+        : null);
+    };
 
-    const measure = () => {
+    const find = () => {
       if (cancelled) return;
       const el = step.target && typeof document !== 'undefined'
         ? document.querySelector(`[data-tour="${step.target}"]`)
         : null;
       if (!el) {
-        if (step.target && tries < 10) {
-          tries += 1;
-          timers.push(setTimeout(measure, 100));
-          return;
-        }
+        if (step.target && tries < 12) { tries += 1; timers.push(setTimeout(find, 100)); return; }
+        rectRef.current = null;
         setRect(null);
         return;
       }
+      rectRef.current = el;
       try { el.scrollIntoView({ block: 'center', behavior: 'smooth' }); } catch { try { el.scrollIntoView(); } catch {} }
-      timers.push(setTimeout(() => {
-        if (cancelled) return;
-        const r = el.getBoundingClientRect();
-        if (r.width > 0 && r.height > 0) {
-          setRect({ top: r.top, left: r.left, width: r.width, height: r.height });
-        } else {
-          setRect(null);
-        }
-      }, 300));
+      timers.push(setTimeout(update, 120));
+      timers.push(setTimeout(update, 350));
+      timers.push(setTimeout(update, 650));
     };
 
     setRect(null);
-    measure();
-    const onResize = () => measure();
-    window.addEventListener('resize', onResize);
+    find();
+    const onViewport = () => update();
+    window.addEventListener('scroll', onViewport, true);
+    window.addEventListener('resize', onViewport);
     return () => {
       cancelled = true;
       timers.forEach(clearTimeout);
-      window.removeEventListener('resize', onResize);
+      if (raf && typeof cancelAnimationFrame === 'function') cancelAnimationFrame(raf);
+      rectRef.current = null;
+      window.removeEventListener('scroll', onViewport, true);
+      window.removeEventListener('resize', onViewport);
     };
   }, [index, step.target]);
-
-  // منع تمرير الخلفية
-  useEffect(() => {
-    const previous = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    return () => { document.body.style.overflow = previous; };
-  }, []);
 
   const next = useCallback(() => {
     if (last) onFinish();
@@ -94,39 +139,23 @@ export default function Tutorial({ onFinish, onSkip, setTab }) {
     return () => window.removeEventListener('keydown', onKey);
   }, [next, prev, onSkip]);
 
-  const below = rect ? rect.top + rect.height / 2 < (typeof window !== 'undefined' ? window.innerHeight : 800) / 2 : true;
-  const spotStyle = rect ? {
-    position: 'fixed',
-    top: Math.max(0, rect.top - PAD),
-    left: Math.max(0, rect.left - PAD),
-    width: rect.width + PAD * 2,
-    height: rect.height + PAD * 2,
-    borderRadius: 18,
-    border: '2px solid var(--gold)',
-    boxShadow: '0 0 0 9999px rgba(0,0,0,0.74)',
-    pointerEvents: 'none',
-    zIndex: 130,
-  } : null;
-
-  const cardStyle = rect ? {
-    position: 'fixed',
-    zIndex: 131,
-    left: 12,
-    right: 12,
-    margin: '0 auto',
-    maxWidth: 460,
-    ...(below
-      ? { top: Math.min((window.innerHeight || 800) - 210, rect.top + rect.height + PAD + 14) }
-      : { bottom: Math.min((window.innerHeight || 800) - 150, (window.innerHeight || 800) - rect.top + PAD + 14) }),
-  } : undefined;
+  const spot = spotStyleFor(rect);
+  const top = cardTopFor(rect);
 
   return (
     <div className="tour-root" role="dialog" aria-modal="true" aria-label={t('tutorial.replay')}>
-      {spotStyle ? <div style={spotStyle} aria-hidden /> : <div className="tour-veil" aria-hidden />}
-      <div className={`tour-card ${rect ? '' : 'centered'}`} style={cardStyle}>
+      {spot ? <div style={spot} aria-hidden /> : <div className="tour-veil" aria-hidden />}
+
+      {/* زر خروج ثابت — يضمن عدم التعلّق حتى لو كان العنصر المستهدف بعيداً */}
+      <button className="tour-exit" onClick={onSkip} aria-label={t('tutorial.skip')}>✕ {t('tutorial.skip')}</button>
+
+      <div
+        className={`tour-card ${rect ? '' : 'centered'}`}
+        style={rect ? { position: 'fixed', zIndex: 131, left: EDGE, right: EDGE, margin: '0 auto', maxWidth: 460, top } : undefined}
+      >
         <div className="between">
           <span className="tag">{t('tutorial.step', { n: index + 1, total: TUTORIAL_STEPS.length })}</span>
-          <button className="btn small ghost" onClick={onSkip}>{t('tutorial.skip')}</button>
+          <span className="small muted">{step.icon}</span>
         </div>
         <div className="tour-icon" aria-hidden>{step.icon}</div>
         <div className="tour-title">{t(`tutorial.${step.id}Title`)}</div>

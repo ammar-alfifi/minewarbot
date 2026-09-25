@@ -150,6 +150,20 @@ try {
   if (Array.isArray(TUTORIAL_STEPS) && TUTORIAL_STEPS.length >= 8) ok(`الجولة: ${TUTORIAL_STEPS.length} خطوات`);
   else bad('عدد خطوات الجولة غير كافٍ');
 
+  // هندسة البطاقة والبقعة: لا تخرجان عن الشاشة مهما كان موضع العنصر (سبب تعلّق الخطوة الأخيرة سابقاً)
+  const { cardTopFor, spotStyleFor } = TutorialModule;
+  const vh = 800;
+  const farBelow = { top: 2400, left: 20, width: 320, height: 600 };
+  const topFar = cardTopFor(farBelow);
+  if (topFar >= 12 && topFar <= vh - 250 - 12 + 1) ok(`موضع البطاقة لعنصر بعيد: ${Math.round(topFar)}px (داخل الشاشة)`);
+  else bad(`موضع البطاقة خارج الشاشة: ${topFar}`);
+  const spotFar = spotStyleFor(farBelow);
+  if (spotFar.height >= 24 && spotFar.height <= vh) ok('بقعة الضوء مقيّدة بارتفاع الشاشة');
+  else bad('بقعة الضوء غير مقيّدة');
+  const nearTop = { top: 60, left: 10, width: 200, height: 80 };
+  if (cardTopFor(nearTop) > nearTop.top + nearTop.height) ok('البطاقة تُعرض أسفل العنصر عند وجود متسع');
+  else bad('تموضع البطاقة أسفل العنصر غير صحيح');
+
   // حالة بوابة الحماية: نصوص أساسية موجودة في الترجمة
   if (!catalog || catalog.regions.length !== 8) bad('الكاتالوج يصل من السيرفر');
   else ok(`الكاتالوج: ${catalog.regions.length} مناطق، ${catalog.relics.length} آثار`);
