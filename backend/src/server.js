@@ -33,34 +33,43 @@ try {
 }
 
 if (bot) {
-  // تشغيل البوت: إعادة محاولة مع حارس زمني.
-  // شبكة تيليجرام قد تتقطع، و Telegraf (node-fetch) بلا مهلة افتراضية فقد يعلق.
+  // تشغيل البوت: ننتظر بدء polling فعلياً (bot.polling) بدل انتظار وعد launch
+  // الذي لا يُحلّ أبداً ما دام البوت يعمل، مع إعادة محاولة متدرجة عند فشل الشبكة.
   const LAUNCH_TIMEOUT_MS = 60_000;
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   let botAttempt = 0;
+
   const launchBot = async () => {
     if (bot.polling) return;
     botAttempt += 1;
     const attempt = botAttempt;
     const launchPromise = bot.launch();
-    launchPromise.catch(() => {}); // نمنع unhandled rejection عند خسارة السباق
-    try {
-      await Promise.race([
-        launchPromise,
-        new Promise((_, reject) => setTimeout(() => reject(new Error('انتهت مهلة تشغيل البوت')), LAUNCH_TIMEOUT_MS)),
+    launchPromise.catch(() => {}); // الرفض يُعالج عبر فحص polling أدناه
+
+    const deadline = Date.now() + LAUNCH_TIMEOUT_MS;
+    let rejected = false;
+    while (!bot.polling && Date.now() < deadline) {
+      const state = await Promise.race([
+        launchPromise.then(() => 'done', (err) => { rejected = err; return 'rejected'; }),
+        sleep(500).then(() => 'waiting'),
       ]);
-      if (bot.polling) {
-        botAttempt = 0;
-        console.log(`🤖 البوت @${config.botUsername} يعمل (polling)`);
-        return;
-      }
-      throw new Error('لم يبدأ polling فعلياً');
-    } catch (err) {
-      const delayMs = Math.min(60_000, 5_000 * attempt);
-      logError(`⚠️  تعذّر تشغيل البوت (محاولة ${attempt}) — إعادة المحاولة خلال ${Math.round(delayMs / 1000)} ث:`, err);
-      setTimeout(launchBot, delayMs);
+      if (state === 'rejected' || state === 'done') break;
     }
+
+    if (bot.polling) {
+      botAttempt = 0;
+      console.log(`🤖 البوت @${config.botUsername} يعمل (polling)`);
+      return;
+    }
+    const delayMs = Math.min(60_000, 5_000 * attempt);
+    logError(`⚠️  تعذّر تشغيل البوت (محاولة ${attempt}) — إعادة المحاولة خلال ${Math.round(delayMs / 1000)} ث:`, rejected || new Error('انتهت مهلة تشغيل البوت'));
+    setTimeout(launchBot, delayMs);
   };
+
   launchBot();
+  // مراقبة دورية: لو توقف polling لأي سبب، نعيد التشغيل تلقائياً
+  const watcher = setInterval(() => { if (!bot.polling) launchBot(); }, 3 * 60_000);
+  watcher.unref?.();
 } else {
   console.log('ℹ️  البوت معطّل (لا يوجد BOT_TOKEN صالح) — الـ API يعمل للتطوير.');
 }
