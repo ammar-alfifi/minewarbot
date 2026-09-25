@@ -2,11 +2,16 @@
 // نقطة التشغيل: تخزين + محرك + API + بوت تيليجرام (polling للتطوير المحلي).
 // ============================================================================
 
+import dns from 'node:dns';
 import { config, configSummary } from './config.js';
 import { createJsonStore } from './store.js';
 import { createEngine } from './game/engine.js';
 import { createApp } from './app.js';
 import { createBot } from './bot.js';
+import { logError } from './log.js';
+
+// بعض بيئات الاستضافة لا تدعم IPv6؛ تفضيل IPv4 يجعل اتصال البوت بتيليجرام موثوقاً.
+dns.setDefaultResultOrder('ipv4first');
 
 const store = createJsonStore({ file: config.dataFile });
 const engine = createEngine({ store, botUsername: config.botUsername });
@@ -21,13 +26,13 @@ let bot = null;
 try {
   bot = createBot({ token: config.botToken, frontendUrl: config.frontendUrl, botUsername: config.botUsername, engine });
 } catch (err) {
-  console.log('⚠️  تعذّر تجهيز البوت:', err.message);
+  logError('⚠️  تعذّر تجهيز البوت:', err);
 }
 
 if (bot) {
   bot.launch()
     .then(() => console.log(`🤖 البوت @${config.botUsername} يعمل (polling)`))
-    .catch((err) => console.log('⚠️  فشل تشغيل البوت — تأكد من BOT_TOKEN:', err.message));
+    .catch((err) => logError('⚠️  فشل تشغيل البوت — تأكد من BOT_TOKEN:', err));
 } else {
   console.log('ℹ️  البوت معطّل (لا يوجد BOT_TOKEN صالح) — الـ API يعمل للتطوير.');
 }
