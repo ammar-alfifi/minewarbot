@@ -6,3 +6,7 @@ dist/
 backend/data/
 backend/.env
 frontend/.env
+
+# قفل الاعتماديات موحّد في جذر المشروع (npm workspaces)
+backend/package-lock.json
+frontend/package-lock.json

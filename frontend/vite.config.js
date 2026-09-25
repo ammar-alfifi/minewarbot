@@ -5,7 +5,17 @@ export default defineConfig({
   plugins: [react()],
   server: {
     port: 5173,
-    // مهم: تيليجرام يتطلب HTTPS — ngrok يعطيك إياه
-    // allowedHosts: true
-  }
+    host: true,
+    // مهم: تيليجرام يتطلب HTTPS — ngrok يعطيك إياه (يُسمح بمضيفات الأنفاق في التطوير)
+    allowedHosts: true,
+  },
+  preview: {
+    port: 4173,
+    host: true,
+    allowedHosts: true,
+  },
+  build: {
+    outDir: 'dist',
+    sourcemap: false,
+  },
 });
