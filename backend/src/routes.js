@@ -1,0 +1,218 @@
+// ============================================================================
+// مسارات الـ API — رقيقة: مصادقة، تحقق من المدخلات، ثم نداء محرك اللعبة.
+// ============================================================================
+
+import { Router } from 'express';
+import { verifyInitData, verifySessionToken, issueSessionToken, newGuestId } from './auth.js';
+import { GameError } from './game/engine.js';
+import { createLimiter, createTokenBucket } from './ratelimit.js';
+
+const str = (v, max = 64) => (typeof v === 'string' ? v.slice(0, max) : '');
+
+export function createApiRoutes({ engine, config }) {
+  const router = Router();
+  const ipLimiter = createLimiter({ windowMs: 60_000, max: 180 });
+  const actionLimiter = createLimiter({ windowMs: 10_000, max: 80 });
+  const mineBucket = createTokenBucket({ capacity: 30, refillPerSec: 8 });
+
+  const guestTokenFor = (playerId, mode = 'guest', name = '') => issueSessionToken(config.sessionSecret, { playerId, mode, name });
+
+  function displayName(user) {
+    const full = [user.firstName, user.lastName].filter(Boolean).join(' ').trim();
+    return (full || user.username || 'منقّب').slice(0, 30);
+  }
+
+  /**
+   * يشتق هوية اللاعب من initData الموثّق، أو من توكن جلسة موقّع من السيرفر
+   * (يُصدر بعد أول تحقق ناجح من تيليجرام — فلا ينكسر اللعب إذا تقادم auth_date).
+   * لا يُقبل أي playerId من العميل.
+   */
+  function resolveIdentity(req) {
+    const initData = str(req.get('x-init-data') || req.body?.initData, 8192);
+    let initError = null;
+    if (initData) {
+      const result = verifyInitData(initData, config.botToken, { maxAgeSec: config.initDataMaxAgeSec });
+      if (result.ok) {
+        return {
+          identity: {
+            playerId: `tg_${result.user.id}`,
+            name: displayName(result.user),
+            photoUrl: result.user.photoUrl,
+            languageCode: result.user.languageCode,
+            mode: 'telegram',
+          },
+          startParam: result.startParam,
+          viaInitData: true,
+        };
+      }
+      initError = result.reason || 'تعذّر التحقق من تيليجرام';
+    }
+
+    const auth = str(req.get('authorization'), 600);
+    if (auth.startsWith('Bearer ')) {
+      const result = verifySessionToken(auth.slice(7), config.sessionSecret);
+      if (result.ok) {
+        return {
+          identity: { playerId: result.playerId, name: result.name || null, photoUrl: null, mode: result.mode },
+          startParam: null,
+          viaInitData: false,
+        };
+      }
+      if (initError) throw new GameError(initError, 401, 'invalid_init_data');
+      throw new GameError(result.reason, 401, 'invalid_token');
+    }
+
+    if (initError) throw new GameError(initError, 401, 'invalid_init_data');
+    return null;
+  }
+
+  function requireIdentity(req) {
+    const resolved = resolveIdentity(req);
+    if (!resolved) throw new GameError('سجّل الدخول أولاً (افتح التطبيق من تيليجرام)', 401, 'no_auth');
+    return resolved;
+  }
+
+  const safe = (fn) => async (req, res, next) => {
+    try {
+      const data = await fn(req);
+      res.json({ ok: true, ...data });
+    } catch (err) {
+      if (err instanceof GameError) {
+        return res.status(err.status).json({ ok: false, error: err.message, code: err.code });
+      }
+      next(err);
+    }
+  };
+
+  router.use((req, res, next) => {
+    const limit = ipLimiter(req.ip || 'unknown');
+    if (!limit.ok) return res.status(429).json({ ok: false, error: 'طلبات كثيرة — انتظر قليلاً', code: 'rate_limited' });
+    next();
+  });
+
+  // ---- صحة الخدمة ----------------------------------------------------------
+  router.get('/health', (req, res) => {
+    res.json({ ok: true, time: new Date().toISOString(), ...engine.stats() });
+  });
+
+  // ---- الجلسة --------------------------------------------------------------
+  router.post('/session', safe(async (req) => {
+    let resolved = resolveIdentity(req);
+    let token = null;
+    let identity;
+    let startParam = null;
+
+    if (resolved) {
+      identity = { ...resolved.identity };
+      startParam = resolved.startParam;
+      if (identity.mode === 'guest') {
+        // اسم عرض اختياري للضيف (تطوير فقط)
+        const nick = str(req.body?.nickname, 20).replace(/[\u0000-\u001f]/g, '').trim();
+        if (nick) identity.name = nick;
+      }
+    } else if (config.allowGuest) {
+      // وضع المتصفح للتطوير: هوية ضيف يصدرها السيرفر وموقّعة — لا يمكن انتحال لاعب آخر.
+      const playerId = newGuestId();
+      const nick = str(req.body?.nickname, 20).replace(/[\u0000-\u001f]/g, '').trim();
+      identity = { playerId, name: nick || null, photoUrl: null, mode: 'guest' };
+      startParam = str(req.body?.startParam || req.query?.startapp, 64) || null;
+    } else {
+      throw new GameError('افتح التطبيق من داخل تيليجرام', 401, 'telegram_required');
+    }
+
+    if (!identity.name) identity.name = 'منقّب ضيف';
+    const result = await engine.session(identity, startParam);
+    // توكن جلسة موقّع: يبقي اللعب شغّالاً حتى لو تقادم initData لاحقاً
+    token = guestTokenFor(identity.playerId, identity.mode, identity.name);
+    return { ...result, token, mode: identity.mode };
+  }));
+
+  // ---- الحالة --------------------------------------------------------------
+  router.get('/state', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    return engine.getState(identity.playerId);
+  }));
+
+  // ---- التعدين -------------------------------------------------------------
+  router.post('/actions/mine', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    const taps = Math.max(1, Math.min(25, Number(req.body?.taps) || 1));
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('هدّئ قليلاً ⛏️', 429, 'rate_limited');
+    const bucket = mineBucket(identity.playerId, taps);
+    if (!bucket.ok) throw new GameError('تعدين أسرع من اللازم — لحظة!', 429, 'mine_throttled');
+    return engine.mine(identity.playerId, taps, str(req.body?.requestId, 64) || null);
+  }));
+
+  // ---- الشراء والترقيات ----------------------------------------------------
+  router.post('/actions/upgrade', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.upgrade(identity.playerId, str(req.body?.item, 32), Number(req.body?.amount) || 1, str(req.body?.requestId, 64) || null);
+  }));
+
+  // ---- الغارات -------------------------------------------------------------
+  router.post('/actions/raid', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.raid(identity.playerId, str(req.body?.targetId, 64), str(req.body?.requestId, 64) || null, { revenge: Boolean(req.body?.revenge) });
+  }));
+
+  // ---- الحفرة اليومية ------------------------------------------------------
+  router.post('/actions/daily', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.dailyDig(identity.playerId, str(req.body?.requestId, 64) || null);
+  }));
+
+  // ---- المطالبات -----------------------------------------------------------
+  router.post('/actions/claim', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.claim(identity.playerId, str(req.body?.kind, 16), str(req.body?.id, 32), str(req.body?.requestId, 64) || null);
+  }));
+
+  // ---- المنطقة والألقاب ----------------------------------------------------
+  router.post('/actions/region', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.switchRegion(identity.playerId, str(req.body?.regionId, 32), str(req.body?.requestId, 64) || null);
+  }));
+
+  router.post('/actions/title', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.setTitle(identity.playerId, str(req.body?.titleId, 32), str(req.body?.requestId, 64) || null);
+  }));
+
+  router.post('/actions/notices', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    const ids = Array.isArray(req.body?.ids) ? req.body.ids.slice(0, 20).map((x) => str(x, 64)) : [];
+    return engine.clearNotices(identity.playerId, ids);
+  }));
+
+  // ---- لوحة الصدارة --------------------------------------------------------
+  router.get('/leaderboard', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    const scope = ['wealth', 'collection', 'season', 'friends'].includes(req.query?.scope) ? req.query.scope : 'wealth';
+    const limit = Math.max(1, Math.min(100, Number(req.query?.limit) || 50));
+    return engine.leaderboard(scope, identity.playerId, limit);
+  }));
+
+  router.get('/raidlog', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    return engine.raidLog(identity.playerId);
+  }));
+
+  // ---- الدعوات -------------------------------------------------------------
+  router.post('/invites', safe(async (req) => {
+    const { identity } = requireIdentity(req);
+    return engine.invite(identity.playerId);
+  }));
+
+  // ---- الكاتالوج (محتوى ثابت للعرض) ---------------------------------------
+  router.get('/catalog', (req, res) => {
+    res.json({ ok: true, catalog: engine.catalog() });
+  });
+
+  return router;
+}
