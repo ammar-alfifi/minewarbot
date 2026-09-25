@@ -8,6 +8,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createApiRoutes } from './routes.js';
+import { logError } from './log.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DIST_DIR = path.join(__dirname, '..', '..', 'frontend', 'dist');
@@ -66,7 +67,7 @@ export function createApp({ engine, config }) {
     if (err?.type === 'entity.parse.failed') {
       return res.status(400).json({ ok: false, error: 'صيغة الطلب غير صالحة', code: 'bad_json' });
     }
-    console.error('❌ خطأ غير متوقع:', err);
+    logError('❌ خطأ غير متوقع:', err);
     res.status(500).json({ ok: false, error: 'حدث خطأ في السيرفر — حاول لاحقاً', code: 'server_error' });
   });
 

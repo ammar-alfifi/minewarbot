@@ -4,6 +4,7 @@
 // ============================================================================
 
 import { Telegraf, Markup } from 'telegraf';
+import { logError } from './log.js';
 
 const REFERRAL_PREFIX = 'ref_';
 
@@ -92,6 +93,6 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
     }
   });
 
-  bot.catch((err) => console.error('Bot error:', err?.message || err));
+  bot.catch((err) => logError('Bot error:', err));
   return bot;
 }
