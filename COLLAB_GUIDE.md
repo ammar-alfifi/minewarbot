@@ -1,21 +1,23 @@
 # خطوات العمل المشترك (GitHub)
 
-## أول مرة — صاحب المشروع (أنت)
-```bash
-cd /home/ammar/telegram-miniapp
-git init -b main
-git add .
-git commit -m "feat: initial telegram miniapp scaffold"
-gh repo create telegram-miniapp --private --source=. --push
-# دعوة الصديق:
-gh repo add-collaborator <github-username-صديقك> --permission push
-# أو من الموقع: Repo → Settings → Collaborators → Add people
-```
+## الحالة الحالية ✅
+- **الريبو:** https://github.com/ammar-alfifi/minewarbot (عام)
+- **الفرع الرئيسي:** `main` — **محمي** (يتطلب Pull Request + موافقة واحدة)
+- **البوت:** `@MineWarrBot`
 
-## حماية فرع main (مهم)
-من GitHub: Settings → Branches → Add rule → Branch name: `main`
-- ✅ Require a pull request before merging
-- ✅ Require 1 approval
+## دعوة صديقك
+```bash
+gh repo add-collaborator ammar-alfifi/minewarbot <github-username-صديقك> --permission push
+```
+> ملاحظة: بما أن الريبو **عام**، صديقك يقدر يستنسخه مباشرة، لكن أضفه كمتعاون ليتمكن من الدفع وفتح Pull Requests.
+
+## أول مرة لصديقك
+```bash
+git clone https://github.com/ammar-alfifi/minewarbot.git
+cd minewarbot
+npm install --prefix backend && npm install --prefix frontend
+cp backend/.env.example backend/.env   # ثم ضع BOT_TOKEN الخاص به
+```
 
 ## الاستخدام اليومي (لكما أنتما الاثنان)
 ```bash
