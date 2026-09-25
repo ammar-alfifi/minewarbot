@@ -107,6 +107,9 @@ try {
   const CollectionTab = (await load('/src/components/CollectionTab.jsx')).default;
   const Modals = (await load('/src/components/Modals.jsx')).default;
   const Header = (await load('/src/components/Header.jsx')).default;
+  const TutorialModule = await load('/src/components/Tutorial.jsx');
+  const Tutorial = TutorialModule.default;
+  const TUTORIAL_STEPS = TutorialModule.TUTORIAL_STEPS;
 
   const render = (Component, props, label, needles = []) => {
     try {
@@ -142,6 +145,10 @@ try {
   for (const [type, payload] of modals) {
     render(Modals, { game: { ...game, modal: { type, payload } }, catalog }, `النافذة: ${type}`);
   }
+
+  render(Tutorial, { onFinish: noop, onSkip: noop, setTab: noop }, 'الجولة التعليمية', ['الخطوة 1 من', 'تخطٍ', 'أهلاً بك في منجمك']);
+  if (Array.isArray(TUTORIAL_STEPS) && TUTORIAL_STEPS.length >= 8) ok(`الجولة: ${TUTORIAL_STEPS.length} خطوات`);
+  else bad('عدد خطوات الجولة غير كافٍ');
 
   // حالة بوابة الحماية: نصوص أساسية موجودة في الترجمة
   if (!catalog || catalog.regions.length !== 8) bad('الكاتالوج يصل من السيرفر');

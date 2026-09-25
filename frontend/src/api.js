@@ -109,6 +109,7 @@ export const api = {
   region: (regionId, requestId) => request('/api/actions/region', { method: 'POST', body: { regionId, requestId } }),
   title: (titleId, requestId) => request('/api/actions/title', { method: 'POST', body: { titleId, requestId } }),
   clearNotices: (ids = []) => request('/api/actions/notices', { method: 'POST', body: { ids } }),
+  tutorialDone: (requestId) => request('/api/actions/tutorial', { method: 'POST', body: { requestId } }),
   leaderboard: (scope = 'wealth', limit = 50) => request(`/api/leaderboard?scope=${encodeURIComponent(scope)}&limit=${limit}`),
   raidLog: () => request('/api/raidlog'),
   invite: () => request('/api/invites', { method: 'POST', body: {} }),

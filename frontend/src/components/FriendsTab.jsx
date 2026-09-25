@@ -125,7 +125,7 @@ export default function FriendsTab({ game, catalog }) {
         </div>
       </div>
 
-      <div className="card">
+      <div className="card" data-tour="leaderboard">
         <div className="between mb8">
           <h3 className="card-title" style={{ margin: 0 }}>🏆 {t('friends.boards.' + (board.scope === 'friends' ? 'friends' : board.scope))}</h3>
           {boardLoading && <span className="spinner" />}

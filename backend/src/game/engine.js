@@ -124,6 +124,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.season.score = saneNumber(p.season.score, 0, 1e15);
     p.lastSeason = p.lastSeason || null;
     p.welcomeGift = Boolean(p.welcomeGift);
+    p.tutorialDone = Boolean(p.tutorialDone);
     delete p.totalMinedLegacy;
     delete p.updatedAt;
     delete p.gold;
@@ -164,6 +165,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       season: { weekId: weekId(ts), score: 0 },
       lastSeason: null,
       welcomeGift: false,
+      tutorialDone: false,
       notices: [],
       actionLog: [],
     }, id);
@@ -495,6 +497,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       milestones: milestoneStatus(p),
       season: { weekId: weekId(ts), score: p.season.score, endsAt: (p.season.weekId + 1) * 7 * 24 * 3600 * 1000 },
       lastSeason: p.lastSeason,
+      tutorialDone: p.tutorialDone,
       stats: {
         totalMined: p.lifetime.totalMined,
         totalGems: p.lifetime.totalGems,
@@ -1083,8 +1086,22 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     };
   }
 
-  async function clearNotices(playerId, ids = []) {
+  /** يسجّل إكمال/تخطي الجولة التعليمية حتى لا تظهر تلقائياً مرة أخرى (قابلة للإعادة يدوياً). */
+  async function completeTutorial(playerId, requestId = null) {
     const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      const cached = replay(p, requestId, ts);
+      if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
+      p.tutorialDone = true;
+      const result = { tutorialDone: true };
+      remember(p, requestId, 'tutorial', result, ts);
+      return { result, player: publicState(doc, p, ts) };
+    });
+  }
+
+  async function clearNotices(playerId, ids = []) {    const ts = now();
     return store.mutate((doc) => {
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
@@ -1115,7 +1132,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
   return {
     session, getState, mine, upgrade, raid, dailyDig, claim, switchRegion, setTitle,
-    leaderboard, raidLog, invite, clearNotices, catalog, stats,
+    leaderboard, raidLog, invite, clearNotices, completeTutorial, catalog, stats,
     // للاختبارات فقط:
     _internals: { playerOf, normalizePlayer, applyIdle, publicState, touch },
   };

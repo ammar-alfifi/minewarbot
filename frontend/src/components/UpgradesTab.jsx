@@ -81,7 +81,7 @@ export default function UpgradesTab({ game, catalog }) {
         ))}
       </div>
 
-      <div className="card">
+      <div className="card" data-tour="workers-card">
         <h3 className="card-title">🧑‍🏭 {t('upgrades.workers')}</h3>
         <UpgradeRow def={byId.worker} data={player.upgrades.worker} player={player} qty={qty} onBuy={buy} busy={busy} />
         <p className="card-sub">
