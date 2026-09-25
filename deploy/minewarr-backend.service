@@ -8,11 +8,12 @@ Type=simple
 WorkingDirectory=%h/telegram-miniapp/backend
 ExecStart=/usr/bin/env node src/server.js
 Environment=NODE_ENV=production
-Environment=STORAGE=sqlite
+Environment=STORAGE=json
+Environment=PUBLIC_URL_FILE=%h/.local/share/minewarr/public-url.txt
+# .env يحتوي BOT_TOKEN وباقي الأسرار (مستثنى من git)
 EnvironmentFile=-%h/telegram-miniapp/backend/.env
 Restart=always
 RestartSec=3
-# تسجيل بسيط
 StandardOutput=append:%h/.local/share/minewarr/backend.log
 StandardError=append:%h/.local/share/minewarr/backend.log
 

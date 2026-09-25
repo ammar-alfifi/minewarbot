@@ -144,6 +144,7 @@ npm run dev:frontend
 | `ALLOW_GUEST` | `true` خارج الإنتاج | وضع الضيف للتطوير |
 | `INIT_DATA_MAX_AGE_SEC` | `86400` | صلاحية `auth_date` قبل الرفض |
 | `SESSION_SECRET` | مشتق/عشوائي | توقيع توكنات الجلسة (ضعه في الإنتاج) |
+| `PUBLIC_URL_FILE` | — | ملف يحدّثه نفق HTTPS؛ يقرأه البوت ليعرف الرابط العام الحالي |
 | `STORAGE` | `json` | `json` أو `sqlite` (موصى به مع قرص دائم) |
 | `SQLITE_FILE` | `./data/minewarr.db` | ملف قاعدة البيانات عند `STORAGE=sqlite` |
 | `DATA_FILE` | `./data/players.json` | ملف التخزين عند `STORAGE=json` |

@@ -5,6 +5,7 @@
 
 import { Telegraf, Markup } from 'telegraf';
 import { logError } from './log.js';
+import { getPublicUrl } from './publicUrl.js';
 
 const REFERRAL_PREFIX = 'ref_';
 
@@ -12,10 +13,10 @@ function isHttps(url) {
   return /^https:\/\//i.test(url || '');
 }
 
-function appButton(frontendUrl, payload, label = '⛏️ افتح المنجم') {
+function appButton(baseUrl, payload, label = '⛏️ افتح المنجم') {
   const url = payload
-    ? `${frontendUrl}/?startapp=${encodeURIComponent(payload)}`
-    : frontendUrl;
+    ? `${baseUrl}/?startapp=${encodeURIComponent(payload)}`
+    : baseUrl;
   // أزرار Web App تتطلب HTTPS؛ خارج ذلك نعرض زر رابط عادي بدل فشل الطلب
   if (isHttps(url)) return Markup.button.webApp(label, url);
   return Markup.button.url(`${label} (وضع المتصفح)`, url);
@@ -24,12 +25,14 @@ function appButton(frontendUrl, payload, label = '⛏️ افتح المنجم')
 export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', engine = null }) {
   if (!token) return null;
   const bot = new Telegraf(token);
+  // الرابط الفعلي وقت الرد: من ملف النفق إن وُجد، وإلا FRONTEND_URL
+  const currentUrl = () => getPublicUrl() || frontendUrl;
 
   const welcomeText = (name, payload) => {
     const refLine = payload?.startsWith(REFERRAL_PREFIX)
       ? '\n🎁 دعوة من صديق: ستحصل على جواهر ترحيبية عند أول دخول!'
       : '';
-    const httpsNote = isHttps(frontendUrl)
+    const httpsNote = isHttps(currentUrl())
       ? ''
       : '\n\n⚠️ الرابط الحالي للتطوير المحلي — افتح اللعبة في المتصفح أو شغّل نفق HTTPS (cloudflared/ngrok) لتعمل داخل تيليجرام.';
     return [
@@ -49,12 +52,12 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
     const payload = ctx.startPayload || null;
     await ctx.reply(welcomeText(ctx.from.first_name || 'منقّب', payload), {
       parse_mode: 'Markdown',
-      ...Markup.inlineKeyboard([[appButton(frontendUrl, payload)]]),
+      ...Markup.inlineKeyboard([[appButton(currentUrl(), payload)]]),
     });
   });
 
   bot.command('app', async (ctx) => {
-    await ctx.reply('افتح المنجم من الزر بالأسفل 👇', Markup.inlineKeyboard([[appButton(frontendUrl, null)]]));
+    await ctx.reply('افتح المنجم من الزر بالأسفل 👇', Markup.inlineKeyboard([[appButton(currentUrl(), null)]]));
   });
 
   bot.command('help', async (ctx) => {
@@ -77,10 +80,10 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
       const link = invite?.botLink || `https://t.me/${botUsername}?start=${REFERRAL_PREFIX}${playerId}`;
       const shareUrl = `https://t.me/share/url?url=${encodeURIComponent(link)}&text=${encodeURIComponent('⛏️ انضم لمنجمي في Mine War!')}`;
       await ctx.reply('🎁 شارك رابطك — كل صديق جديد يمنحك جواهر:', {
-        ...Markup.inlineKeyboard([[Markup.button.url('📤 شارك الدعوة', shareUrl)], [appButton(frontendUrl, null)]]),
+        ...Markup.inlineKeyboard([[Markup.button.url('📤 شارك الدعوة', shareUrl)], [appButton(currentUrl(), null)]]),
       });
     } catch {
-      await ctx.reply('افتح التطبيق أولاً ثم استخدم زر الدعوة داخله 👇', Markup.inlineKeyboard([[appButton(frontendUrl, null)]]));
+      await ctx.reply('افتح التطبيق أولاً ثم استخدم زر الدعوة داخله 👇', Markup.inlineKeyboard([[appButton(currentUrl(), null)]]));
     }
   });
 
@@ -97,9 +100,9 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
         `⛏️ قوة الضربة: ${p.power.manual}`,
         `🏺 الآثار: ${p.stats.uniqueRelics}/${p.stats.totalRelics}`,
         `🏆 نقاط الموسم: ${p.season.score}`,
-      ].join('\n'), { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[appButton(frontendUrl, null)]]) });
+      ].join('\n'), { parse_mode: 'Markdown', ...Markup.inlineKeyboard([[appButton(currentUrl(), null)]]) });
     } catch {
-      await ctx.reply('لم أجد تقدمك بعد — افتح اللعبة وابدأ التعدين أولاً!', Markup.inlineKeyboard([[appButton(frontendUrl, null)]]));
+      await ctx.reply('لم أجد تقدمك بعد — افتح اللعبة وابدأ التعدين أولاً!', Markup.inlineKeyboard([[appButton(currentUrl(), null)]]));
     }
   });
 

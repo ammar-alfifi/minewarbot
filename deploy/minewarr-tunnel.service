@@ -1,16 +1,18 @@
 [Unit]
-# نفق Cloudflare ثابت (نفق مُسمّى) — يمنح رابط HTTPS دائم لا يتغير.
-# الإعداد المسبق:
-#   cloudflared tunnel login
-#   cloudflared tunnel create minewarr
-#   أنشئ ~/.cloudflared/config.yml كما في DEPLOY.md
+# نفق HTTPS ذاتي التحديث (quick tunnel) — بدون حساب ولا نطاق.
+# يكتب الرابط الجديد في PUBLIC_URL_FILE ويحدّث زر القائمة في تيليجرام تلقائياً.
 After=network-online.target minewarr-backend.service
 Wants=network-online.target
 PartOf=minewarr-backend.service
 
 [Service]
 Type=simple
-ExecStart=/usr/bin/env cloudflared tunnel --config %h/.cloudflared/config.yml run minewarr
+WorkingDirectory=%h/telegram-miniapp/backend
+ExecStart=/usr/bin/env node scripts/tunnel.mjs
+Environment=TUNNEL_TARGET=http://127.0.0.1:3001
+Environment=CLOUDFLARED_BIN=%h/.local/bin/cloudflared
+Environment=PUBLIC_URL_FILE=%h/.local/share/minewarr/public-url.txt
+EnvironmentFile=-%h/telegram-miniapp/backend/.env
 Restart=always
 RestartSec=5
 StandardOutput=append:%h/.local/share/minewarr/tunnel.log

@@ -31,6 +31,8 @@ export const config = {
   botToken,
   botUsername: (process.env.BOT_USERNAME || 'MineWarrBot').replace(/^@/, ''),
   frontendUrl,
+  // ملف يحدّثه نفق HTTPS ليعرف البوت الرابط العام الحالي (اختياري)
+  publicUrlFile: process.env.PUBLIC_URL_FILE || '',
   allowedOrigins,
   dataFile: process.env.DATA_FILE || path.join(__dirname, '..', 'data', 'players.json'),
   // json (افتراضي) أو sqlite — نفس واجهة المستودع بلا تغيير في قواعد اللعبة
