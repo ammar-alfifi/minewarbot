@@ -113,5 +113,6 @@ export const api = {
   leaderboard: (scope = 'wealth', limit = 50) => request(`/api/leaderboard?scope=${encodeURIComponent(scope)}&limit=${limit}`),
   raidLog: () => request('/api/raidlog'),
   invite: () => request('/api/invites', { method: 'POST', body: {} }),
+  logout: () => request('/api/actions/logout', { method: 'POST', body: {} }),
   health: () => request('/api/health'),
 };

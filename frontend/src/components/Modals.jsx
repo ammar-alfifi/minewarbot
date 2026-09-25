@@ -216,6 +216,7 @@ export default function Modals({ game, catalog, onStartTour }) {
         <p className="card-sub">💰 لا يوجد شراء حقيقي: الجواهر تُجمع باللعب فقط.</p>
         <p className="card-sub">🔒 {t('help.footer')}</p>
         <button className="btn ghost big mt12" onClick={() => { close(); onStartTour?.(); }}>🎓 {t('tutorial.replay')}</button>
+        <button className="btn ghost big mt8" onClick={() => { actions.logout?.(); }}>🚪 {t('modals.logout')}</button>
         <button className="btn primary big mt8" onClick={close}>{t('modals.close')}</button>
       </Sheet>
     );

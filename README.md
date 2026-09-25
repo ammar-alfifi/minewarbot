@@ -152,6 +152,7 @@ npm run cf:deploy   # نشر على Cloudflare Workers
 | `ALLOWED_ORIGINS` | قيمة `FRONTEND_URL` | نطاقات CORS مسموحة (مفصولة بفواصل) |
 | `ALLOW_GUEST` | `true` خارج الإنتاج | وضع الضيف للتطوير |
 | `INIT_DATA_MAX_AGE_SEC` | `86400` | صلاحية `auth_date` قبل الرفض |
+| `SESSION_MAX_AGE_MS` | `604800000` (7 أيام) | عمر توكن الجلسة؛ أقل = أأمن عند سرقة التوكن |
 | `SESSION_SECRET` | مشتق/عشوائي | توقيع توكنات الجلسة (ضعه في الإنتاج) |
 | `PUBLIC_URL_FILE` | — | ملف يحدّثه نفق HTTPS؛ يقرأه البوت ليعرف الرابط العام الحالي |
 | `STORAGE` | `json` | `json` أو `sqlite` (موصى به مع قرص دائم) |

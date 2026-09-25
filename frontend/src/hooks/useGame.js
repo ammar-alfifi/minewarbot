@@ -24,8 +24,10 @@ export function useGame() {
   const [boardLoading, setBoardLoading] = useState(false);
   const [raidLog, setRaidLog] = useState({ incoming: [], outgoing: [], shieldUntil: 0 });
   const [invite, setInvite] = useState(null);
+  const [, setClockTick] = useState(0); // نبضة كل ثانية لعرض دخل العمّال الحيّ
 
   const stateRef = useRef(null);
+  const stateAtRef = useRef(Date.now());
   const pendingRef = useRef(0);
   const inFlight = useRef(false);
   const flushTimer = useRef(null);
@@ -58,6 +60,7 @@ export function useGame() {
     if (payload.player) {
       setPlayer(payload.player);
       stateRef.current = payload.player;
+      stateAtRef.current = Date.now();
       const notices = (payload.player.notices || []).filter((n) => !dismissedNotices.current.has(n.id));
       if (notices.length && !modalRef.current) setModal({ type: 'notice', payload: notices });
     }
@@ -121,6 +124,13 @@ export function useGame() {
   }, [applyServerState]);
 
   useEffect(() => { bootstrap(); }, [bootstrap]);
+
+  // نبضة دورية لإظهار دخل العمّال مباشرةً بين استطلاعات السيرفر
+  useEffect(() => {
+    if (status !== 'ready') return undefined;
+    const id = setInterval(() => setClockTick((x) => x + 1), 1000);
+    return () => clearInterval(id);
+  }, [status]);
 
   const recoverAuth = useCallback(async () => {
     setSessionToken('');
@@ -246,10 +256,15 @@ export function useGame() {
       ids.forEach((id) => dismissedNotices.current.add(id));
       try {
         const res = await api.clearNotices(ids);
-        if (res.player) { setPlayer(res.player); stateRef.current = res.player; }
+        if (res.player) { setPlayer(res.player); stateRef.current = res.player; stateAtRef.current = Date.now(); }
       } catch {}
     },
     tutorialDone: () => run(() => api.tutorialDone(newRequestId()), { silentErrors: true, hapticKind: 'light' }),
+    logout: async () => {
+      try { await api.logout(); } catch { /* نُكمل الإبطال محلياً حتى لو فشل الطلب */ }
+      setSessionToken('');
+      try { window.location.reload(); } catch {}
+    },
   }), [run]);
 
   const refreshBoard = useCallback(async (scope = board.scope) => {
@@ -299,7 +314,12 @@ export function useGame() {
 
   const nickname = useMemo(() => (mode === 'guest' ? getNickname() : ''), [mode]);
 
-  const displayCoins = (player?.coins || 0) + pending * (player?.power?.manual || 0);
+  // عدّاد متفائل: نقرات معلّقة + دخل العمّال الحيّ المتراكم منذ آخر رد من السيرفر
+  const idlePerSec = player?.power?.idlePerSec || 0;
+  const idleCapSec = (player?.power?.offlineCapHours || 8) * 3600;
+  const idleElapsedSec = player ? Math.min(Math.max(0, (Date.now() - stateAtRef.current) / 1000), idleCapSec) : 0;
+  const idleGain = Math.floor(idleElapsedSec * idlePerSec);
+  const displayCoins = (player?.coins || 0) + pending * (player?.power?.manual || 0) + idleGain;
   const displayGems = player?.gems || 0;
 
   return {

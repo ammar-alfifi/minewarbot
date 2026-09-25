@@ -131,7 +131,7 @@ export default function FriendsTab({ game, catalog }) {
           {boardLoading && <span className="spinner" />}
         </div>
         <div className="seg" style={{ marginBottom: 10 }}>
-          {['friends', 'season', 'wealth', 'collection', 'global'].map((scope) => (
+          {['friends', 'season', 'wealth', 'collection'].map((scope) => (
             <button key={scope} className={board.scope === scope ? 'on' : ''} onClick={() => refreshBoard(scope)}>
               {t('friends.boards.' + scope)}
             </button>

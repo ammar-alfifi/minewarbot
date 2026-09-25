@@ -154,6 +154,7 @@ const ar = {
     raidGo: 'هجوم!',
     cancel: 'إلغاء',
     confirm: 'تأكيد',
+    logout: 'تسجيل الخروج',
     error: 'خطأ',
     helpTitle: 'كيف تُلعب؟',
   },

@@ -357,3 +357,56 @@ test('كشف الآثار يمنع التكرار خلال المهلة ويمن
   assert.equal(third.result.relicIsNew, false, 'أثر مكرر');
   assert.ok(third.result.dupeGems >= 1);
 });
+
+test('دخل العمّال لا يُهدر عند النداءات المتقاربة (أقل من ثانية) ولا تُهمل الكسور', async () => {
+  const { engine, store, clock } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.workers = 10;
+    p.coins = 0;
+    p.idleCarry = 0;
+    p.lastTick = clock.t;
+  });
+  const rate = (await engine.getState('tg_1')).player.power.idlePerSec;
+  assert.ok(rate > 0);
+  let coins = 0;
+  for (let i = 0; i < 8; i++) {
+    clock.t += 250; // نقر/استطلاع سريع كل ربع ثانية
+    coins = (await engine.getState('tg_1')).player.coins;
+  }
+  // مرّت ثانيتان كاملتان → يجب استلام كامل دخل العمّال بلا فقدان
+  assert.equal(coins, rate * 2, 'لم يُهدر أي دخل عمال رغم النداءات السريعة');
+});
+
+test('إعادة استخدام requestId لعملية من نوع آخر لا تُقبل', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await giveCoins(store, 'tg_1', 1000);
+  await engine.mine('tg_1', 1, 'req_shared_x');
+  const up = await engine.upgrade('tg_1', 'pickaxe', 1, 'req_shared_x');
+  assert.notEqual(up.replayed, true, 'الترقية تُنفَّذ ولا تُخلط بنتيجة التعدين');
+  assert.equal(up.player.equipment.pickaxe, 2);
+});
+
+test('لوحة الصدارة لا تكشف آخر ظهور وتقرّب الغنيمة لأقرب 5', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await engine.session(who('tg_2'));
+  await giveCoins(store, 'tg_2', 5000);
+  const board = await engine.leaderboard('wealth', 'tg_1');
+  for (const e of board.entries) {
+    assert.equal(e.lastSeen, undefined, 'لا يُكشف lastSeen للخصوم');
+    if (e.potentialLoot != null) assert.equal(e.potentialLoot % 5, 0, 'الغنيمة مقاربة لأقرب 5');
+  }
+});
+
+test('تسجيل الخروج يُبطل توكن الجلسة عبر نسخة الجلسة', async () => {
+  const { engine } = setup();
+  const s = await engine.session(who('tg_1'));
+  assert.equal(await engine.sessionValid('tg_1', s.sessionEpoch), true);
+  const out = await engine.logout('tg_1');
+  assert.equal(out.epoch, s.sessionEpoch + 1);
+  assert.equal(await engine.sessionValid('tg_1', s.sessionEpoch), false, 'التوكن القديم أُبطل');
+  assert.equal(await engine.sessionValid('tg_1', out.epoch), true);
+});

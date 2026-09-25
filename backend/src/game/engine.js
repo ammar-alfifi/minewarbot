@@ -54,6 +54,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.createdAt = p.createdAt || ts;
     p.lastSeen = p.lastSeen || ts;
     p.lastTick = p.lastTick || p.updatedAt || ts;
+    // كسر العملة المتبقّي من دخل العمّال، حتى لا يُهدر التقريب مع كل نداء
+    p.idleCarry = Number.isFinite(Number(p.idleCarry)) ? Math.min(Math.max(Number(p.idleCarry), 0), 1) : 0;
+    // نسخة الجلسة: تزداد عند تسجيل الخروج فتُبطل كل التوكنات الصادرة قبلها
+    p.sessionEpoch = saneNumber(p.sessionEpoch, 0, 1e9);
     p.coins = saneNumber(p.coins ?? p.gold, 0, 1e15);
     p.gems = saneNumber(p.gems, 0, 1e7);
     const eq = p.equipment || {};
@@ -142,6 +146,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       createdAt: ts,
       lastSeen: ts,
       lastTick: ts,
+      idleCarry: 0,
+      sessionEpoch: 0,
       coins: 0,
       gems: 0,
       equipment: { pickaxe: 1, lamp: 1, helmet: 1 },
@@ -295,13 +301,20 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   function applyIdle(doc, p, ts) {
-    const elapsed = Math.max(0, (ts - (p.lastTick || ts)) / 1000);
-    p.lastTick = ts;
+    const anchor = p.lastTick || ts;
+    const elapsed = Math.max(0, (ts - anchor) / 1000);
+    // لا نُقدّم وقت آخر احتساب قبل مرور ثانية كاملة: سابقاً كان أي نداء أقصر من
+    // ثانية (نقر سريع) يُصفّر دخل العمّال تماماً لأن lastTick كان يتقدّم دائماً.
     if (elapsed < 1) return null;
+    p.lastTick = ts;
+
     const capHours = offlineCapHours(p);
     const effective = Math.min(elapsed, capHours * 3600);
     const rate = powerOf(p, ts).idlePerSec;
-    const coins = Math.floor(rate * effective);
+    // نُرحّل كسر العملة المتبقّي بدل إهداره في التقريب عند كل نداء.
+    const exact = rate * effective + (p.idleCarry || 0);
+    const coins = Math.floor(exact);
+    p.idleCarry = Math.min(Math.max(exact - coins, 0), 1);
     if (coins > 0) addCoins(doc, p, coins, ts, { mined: true });
     return {
       coins,
@@ -351,9 +364,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   // تكرار الطلبات (Idempotency) — نفس requestId لا يُنفَّذ مرتين
   // -------------------------------------------------------------------------
 
-  function replay(p, requestId, ts) {
+  function replay(p, requestId, type, ts) {
     if (!requestId || !REQUEST_ID_RE.test(requestId)) return null;
-    const entry = (p.actionLog || []).find((e) => e.id === requestId && ts - e.at < 60 * 60 * 1000);
+    // المطابقة تشمل نوع العملية: إعادة استخدام نفس المعرّف لعملية أخرى لا تُقبل.
+    const entry = (p.actionLog || []).find((e) => e.id === requestId && e.type === type && ts - e.at < 60 * 60 * 1000);
     return entry ? entry.result : null;
   }
 
@@ -604,7 +618,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       }
 
       const upkeep = touch(doc, p, ts);
-      return { player: publicState(doc, p, ts), isNew, mode: identity.mode, idle: upkeep.idle, visitReward: upkeep.visitReward, catalog: catalog() };
+      return { player: publicState(doc, p, ts), isNew, mode: identity.mode, idle: upkeep.idle, visitReward: upkeep.visitReward, catalog: catalog(), sessionEpoch: p.sessionEpoch };
     });
   }
 
@@ -643,7 +657,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'mine', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       const power = powerOf(p, ts);
@@ -685,7 +699,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, `upgrade:${item}`, ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       let result;
@@ -736,7 +750,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!attacker) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, attacker, ts);
 
-      const cached = replay(attacker, requestId, ts);
+      const cached = replay(attacker, requestId, 'raid', ts);
       if (cached) return { result: cached, player: publicState(doc, attacker, ts), replayed: true };
 
       if (!targetId || typeof targetId !== 'string' || targetId === playerId) fail('هدف غير صالح', 400, 'bad_target');
@@ -853,7 +867,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'daily', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       if (ts - p.dailyAt < DAILY.cooldownMs) {
@@ -906,7 +920,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, `claim:${kind}:${id}`, ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       let result;
@@ -953,7 +967,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'region', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
       if (!p.regionsUnlocked.includes(regionId)) fail('المنطقة غير مفتوحة بعد', 403, 'region_locked');
       p.regionId = regionId;
@@ -969,7 +983,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'title', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
       const def = TITLES.find((t) => t.id === titleId);
       if (!def) fail('لقب غير معروف', 400, 'unknown_title');
@@ -1010,13 +1024,13 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       manualPower: Math.floor(powerOf(p, ts).manual),
       isMe: p.playerId === viewerId,
       isFriend: viewerFriends.has(p.playerId),
-      lastSeen: p.lastSeen,
       canRaid: p.playerId !== viewerId,
     };
-    // تقديرات الغارة تُحسب على السيرفر — الواجهة لا تعرف المعادلات
+    // تقديرات الغارة تُحسب على السيرفر — الواجهة لا تعرف المعادلات.
+    // نقارب الغنيمة لأقرب 5 حتى لا تكشف رصيد الخصم بدقة (الغارات متاحة للجميع بلا صداقة).
     if (viewer && p.playerId !== viewerId) {
       entry.raidEstimate = Math.round(raidSuccessChance(viewer, p, false, ts) * 100);
-      entry.potentialLoot = stealAmount(viewer, p, false, ts);
+      entry.potentialLoot = Math.round(stealAmount(viewer, p, false, ts) / 5) * 5;
     }
     return entry;
   }
@@ -1052,7 +1066,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         total: all.length,
         weekId: weekId(ts),
       };
-    }, { persist: false });
+    });
   }
 
   async function raidLog(playerId) {
@@ -1093,7 +1107,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     return store.mutate((doc) => {
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'tutorial', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
       p.tutorialDone = true;
       const result = { tutorialDone: true };
@@ -1117,6 +1131,30 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   // -------------------------------------------------------------------------
+  // الجلسات: تحقق من النسخة الحالية + تسجيل الخروج (إبطال التوكنات)
+  // -------------------------------------------------------------------------
+
+  /** هل التوكن الصادر بهذه النسخة ما زال صالحاً؟ (تسجيل الخروج يرفع النسخة). */
+  async function sessionValid(playerId, epoch) {
+    const raw = await store.get(playerId);
+    if (!raw) return false;
+    const current = Number.isFinite(Number(raw.sessionEpoch)) ? Math.floor(Number(raw.sessionEpoch)) : 0;
+    return current === (Number(epoch) || 0);
+  }
+
+  /** يرفع نسخة الجلسة فيُبطل كل التوكنات السابقة لهذا اللاعب. */
+  async function logout(playerId) {
+    const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      p.sessionEpoch = saneNumber(p.sessionEpoch, 0, 1e9) + 1;
+      p.lastSeen = ts;
+      return { epoch: p.sessionEpoch };
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // إحصاءات صحية + أدوات اختبار
   // -------------------------------------------------------------------------
 
@@ -1134,6 +1172,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   return {
     session, getState, mine, upgrade, raid, dailyDig, claim, switchRegion, setTitle,
     leaderboard, raidLog, invite, clearNotices, completeTutorial, catalog, stats,
+    sessionValid, logout,
     // للاختبارات فقط:
     _internals: { playerOf, normalizePlayer, applyIdle, publicState, touch },
   };
