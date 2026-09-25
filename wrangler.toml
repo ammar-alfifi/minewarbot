@@ -22,9 +22,8 @@ INIT_DATA_MAX_AGE_SEC = "86400"
 # ALLOWED_ORIGINS = "https://minewarrbot.<your-subdomain>.workers.dev,http://localhost:5173"
 # ALLOW_GUEST = "true"   # للتطوير المحلي فقط؛ اتركها معطّلة في الإنتاج
 
-# قاعدة البيانات D1: أنشئها أولاً ثم الصق المعرّف:
-#   npx wrangler d1 create minewarr
-# [[d1_databases]]
-# binding = "DB"
-# database_name = "minewarr"
-# database_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# قاعدة البيانات D1 (أنشئها أولاً: npx wrangler d1 create minewarr)
+[[d1_databases]]
+binding = "DB"
+database_name = "minewarr"
+database_id = "dc0bc8a9-2008-4175-81b0-9685c84feefb"
