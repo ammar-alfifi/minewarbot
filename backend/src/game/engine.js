@@ -1075,12 +1075,13 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   async function invite(playerId) {
-    const p = playerOf(store.read(), playerId);
-    if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+    // get() موحّد عبر المستودعات (متزامن محلياً، async على D1) — بلا قراءة كاملة للوثيقة
+    const raw = await store.get(playerId);
+    if (!raw) fail('لاعب غير معروف', 401, 'unknown_player');
     const code = `${REFERRAL.prefix}${playerId}`;
     return {
       code,
-      shareText: `⛏️ انضم لمنجمي في Mine War وتنافس معي! ${p.name} ينتظرك في الأعماق.`,
+      shareText: `⛏️ انضم لمنجمي في Mine War وتنافس معي! ${raw.name || 'منقّب'} ينتظرك في الأعماق.`,
       botLink: `https://t.me/${botUsername}?start=${encodeURIComponent(code)}`,
       appLink: `https://t.me/${botUsername}?startapp=${encodeURIComponent(code)}`,
     };
@@ -1119,8 +1120,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   // إحصاءات صحية + أدوات اختبار
   // -------------------------------------------------------------------------
 
-  function stats() {
-    const doc = store.read();
+  async function stats() {
+    const doc = await store.snapshot();
     const players = Object.keys(doc.players || {}).length;
     return {
       players,

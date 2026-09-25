@@ -6,8 +6,9 @@
 
 | الخيار | التكلفة | البوت دائم؟ | رابط ثابت؟ | ملاحظة |
 |---|---|---|---|---|
-| **Docker على VPS** (Oracle Always Free / أي VPS) | 0$–5$ | ✅ | ✅ مع نفق Cloudflare أو Caddy | **الأفضل والموصى به** |
-| **Fly.io** | ضمن الحصة المجانية تقريباً | ✅ (`auto_stop_machines=false`) | ✅ `*.fly.dev` | ملف `fly.toml` جاهز |
+| **Cloudflare Workers + D1** ⭐ | 0$ | ✅ بلا سيرفر (webhook) | ✅ `*.workers.dev` | **الأنسب: مجاني بلا بطاقة وبلا جهازك** |
+| **Docker على VPS** (Oracle Always Free / أي VPS) | 0$–5$ | ✅ | ✅ مع نفق Cloudflare أو Caddy | الأفضل إن كان لديك سيرفر |
+| **Fly.io** | ضمن الحصة المجانية تقريباً | ✅ (`auto_stop_machines=false`) | ✅ `*.fly.dev` | ملف `fly.toml` جاهز (يحتاج بطاقة غالباً) |
 | **Render** | مدفوع للبوت الدائم + قرص | ⚠️ المجاني يُنيم الخدمة | ✅ `*.onrender.com` | ملف `render.yaml` جاهز |
 | **جهازك + systemd** | 0$ | ❌ عند النوم/الإطفاء | ⚠️ نفق مؤقت | الأسرع للتجربة فقط |
 
@@ -21,6 +22,49 @@
   docker run -v ./data:/data:Z ...                       # :Z عند تفعيل SELinux
   ```
 - في الإنتاج، إذا تعذّرت الكتابة على مسار SQLite يتوقف السيرفر برسالة واضحة بدل أن يعمل ببيانات مؤقتة.
+
+---
+
+## ⭐ الخيار الأسرع: Cloudflare Workers (0$ بلا بطاقة وبلا سيرفر)
+
+اللعبة تعمل **بلا سيرفر دائم**: الواجهة + الـ API + **webhook البوت** كلها في Worker واحد على شبكة Cloudflare، والتخزين في قاعدة **D1** (SQLite مُدارة). لا نوم، لا بطاقة، ورابط ثابت `*.workers.dev`.
+
+### أ) أنشئ قاعدة D1
+من لوحة Cloudflare: **Storage & Databases → D1 → Create database** باسم `minewarr`، ثم انسخ **Database ID**.
+
+### ب) النشر من اللوحة (بدون أوامر)
+1. **Workers & Pages → Create → Import a Git repository** واختر `minewarbot`.
+2. **Build command**: `npm ci && npm run build` — **Deploy command**: `npx wrangler deploy`.
+3. بعد أول نشر: **Settings → Bindings → Add → D1 database** باسم `DB` واربط قاعدة `minewarr`.
+4. **Settings → Variables and Secrets** وأضف الأسرار: `BOT_TOKEN`، `SESSION_SECRET` (`openssl rand -hex 32`)، `WEBHOOK_SECRET` (نصّ عشوائي)، `ADMIN_SECRET` (نصّ عشوائي). وأضف متغيرات عادية: `BOT_USERNAME=MineWarrBot` و`APP_URL=https://<اسم-مشروعك>.<حسابك>.workers.dev`.
+5. أعد **Deploy** بعد إضافة الربط والمتغيرات.
+
+> بديل عبر الأوامر (بـ Node محلي): `npx wrangler login` ثم `npx wrangler d1 create minewarr`، الصق المعرّف في `wrangler.toml` (فعّل كتلة `[[d1_databases]]`)، ثم `npm run cf:deploy`.
+
+### ج) اربط البوت بالـ webhook
+```bash
+npm run webhook --prefix backend -- https://<اسم-مشروعك>.<حسابك>.workers.dev
+```
+يضبط الـ webhook + زر القائمة + أوامر البوت تلقائياً (يقرأ `BOT_TOKEN` و`WEBHOOK_SECRET` من `backend/.env`).
+
+### د) انقل بياناتك الحالية (اختياري)
+```bash
+npm run backup --prefix backend          # ينشئ backend/backups/players-<تاريخ>.json
+curl -X POST "https://<رابطك>/api/admin/import" \
+  -H "x-admin-secret: <ADMIN_SECRET>" -H 'Content-Type: application/json' \
+  --data-binary @backend/backups/players-<تاريخ>.json
+```
+
+### هـ) التطوير محلياً
+```bash
+npm run cf:dev     # Worker + D1 محليان عبر wrangler dev
+```
+
+ملاحظات:
+- الحد المجاني اليومي من Cloudflare كبير ويكفي لعبة بين الأصدقاء، وبلا أي بطاقة.
+- التخزين صفّ واحد للحالة كاملة بكتابة ذرّية (عدّاد `rev`) — مناسب لعدد لاعبين متوسط؛ للأعداد الضخمة جداً يمكن تقسيم الصفوف لاحقاً.
+- إن غيّرت اسم المشروع، حدّث `APP_URL`/`ALLOWED_ORIGINS` وأعد ضبط الـ webhook.
+- **لا تحتاج Cloudflare Access** لهذا المشروع.
 
 ---
 

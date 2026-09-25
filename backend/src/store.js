@@ -62,6 +62,16 @@ export function createJsonStore({ file }) {
       return doc;
     },
 
+    /** لاعب واحد (متزامن — يُنتظر في المحرك ليعمل على كل المنصّات). */
+    get(playerId) {
+      return doc.players[playerId] || null;
+    },
+
+    /** لقطة كاملة للنسخة (متزامنة هنا، وasync على D1). */
+    snapshot() {
+      return doc;
+    },
+
     /**
      * تعديل حصري + حفظ ذرّي. fn(doc) قد تكون دالية متزامنة أو async.
      * persist:false مفيد للقراءات التي تحدّث العدّادات الداخلية فقط (توفير كتابة القرص).
