@@ -1,0 +1,20 @@
+[Unit]
+# نفق Cloudflare ثابت (نفق مُسمّى) — يمنح رابط HTTPS دائم لا يتغير.
+# الإعداد المسبق:
+#   cloudflared tunnel login
+#   cloudflared tunnel create minewarr
+#   أنشئ ~/.cloudflared/config.yml كما في DEPLOY.md
+After=network-online.target minewarr-backend.service
+Wants=network-online.target
+PartOf=minewarr-backend.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/env cloudflared tunnel --config %h/.cloudflared/config.yml run minewarr
+Restart=always
+RestartSec=5
+StandardOutput=append:%h/.local/share/minewarr/tunnel.log
+StandardError=append:%h/.local/share/minewarr/tunnel.log
+
+[Install]
+WantedBy=default.target

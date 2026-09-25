@@ -4,14 +4,17 @@
 - **الريبو:** https://github.com/ammar-alfifi/minewarbot (عام)
 - **الفرع الرئيسي:** `main` — **محمي** (يتطلب Pull Request + موافقة واحدة)
 - **البوت:** `@MineWarrBot`
-- **النسخة الحالية:** MVP كامل — تعدين، ترقيات، عمّال ومرافق، 8 مناطق، آثار وجواهر، حفرة يومية، أحداث أسبوعية، هدف جماعي، مواسم، لوحات صدارة، وغارات ودّية. الباكند هو مصدر الحقيقة وكل شيء محفوظ على السيرفر.
+- **النسخة الحالية:** MVP كامل — تعدين، ترقيات، عمّال ومرافق، 8 مناطق، آثار وجواهر، حفرة يومية، أحداث أسبوعية، هدف جماعي، مواسم، لوحات صدارة، غارات ودّية، وجولة تعليمية قابلة للإعادة. الباكند هو مصدر الحقيقة وكل شيء محفوظ على السيرفر.
+- **التخزين:** JSON للتطوير، و**SQLite** للإنتاج (نفس الواجهة) — والنشر عبر Docker موثّق في `DEPLOY.md`.
 
 ## البنية السريعة
 ```
 backend/src/game/rules.js   ← كل الأرقام والمعادلات (لا تكررها في الواجهة)
 backend/src/game/engine.js  ← منطق اللعب الرسمي
 backend/src/routes.js       ← الـ API والمصادقة
-frontend/src/components/    ← الشاشات (منجم/ترقيات/أصدقاء/مجموعة)
+backend/src/store.js        ← تخزين JSON (تطوير)
+backend/src/store.sqlite.js ← تخزين SQLite (إنتاج، نفس الواجهة)
+frontend/src/components/    ← الشاشات (منجم/ترقيات/أصدقاء/مجموعة/جولة)
 frontend/src/hooks/useGame.js ← إدارة الحالة في الواجهة
 ```
 
@@ -47,7 +50,7 @@ git push -u origin feature/اسم-الميزة
 1. **لا تضع معادلات اللعبة في الواجهة** — أضفها في `backend/src/game/rules.js` فقط.
 2. **لا تثق بالعميل**: أي رصيد/نتيجة/عشوائية تُحسب في `engine.js`.
 3. **لا ترفع `.env`** أو أي توكن. لو انرفع سهواً، أبطِل التوكن من BotFather فوراً.
-4. **شغّل `npm test`** — يشمل 46 اختباراً للباكند + اختبار عرض لكل الشاشات ببيانات حقيقية.
+4. **شغّل `npm test`** — يشمل 56 اختباراً للباكند (قواعد، مصادقة، محرك، تخزين JSON/SQLite، HTTP) + اختبار عرض لكل الشاشات والجولة ببيانات حقيقية.
 5. أي ترقية تخزين أو تغيير في الحقول: عدّل `store.js`/`engine.js` مع تحديث الاختبارات.
 
 ## تقسيم مقترح للشغل
@@ -56,7 +59,10 @@ git push -u origin feature/اسم-الميزة
 - **مشترك:** المحتوى الجديد (مناطق/آثار/أحداث) في `rules.js` + تجربة داخل تيليجرام + ملف الأفكار `IDEAS.md`.
 
 ## النشر المجاني
-- **خيار واحد (الأسهل):** انشر الباكند فقط مع `SERVE_FRONTEND=true` بعد `npm run build` — يخدم الواجهة والـ API على نفس النطاق.
-- **Render / Railway:** اربط الريبو، ومتغيرات البيئة: `BOT_TOKEN`, `NODE_ENV=production`, `ALLOWED_ORIGINS=https://رابط-الواجهة`, `SESSION_SECRET=قيمة-عشوائية-طويلة`.
-- **Frontend منفصل على Vercel:** `vercel --prod` من مجلد `frontend/` مع `VITE_API_URL=https://رابط-الباكند`.
-- بعد النشر: حدّث رابط الـ Menu Button في BotFather → `/mybots` → Bot Settings → Menu Button.
+- **الدليل الكامل:** `DEPLOY.md` (Docker، Oracle Always Free، Fly.io، Render، نطاق ثابت، ونقل البيانات).
+- **الأسهل:** Docker على أي سيرفر مع قرص دائم:
+  ```bash
+  docker compose up -d --build
+  ```
+- **بديل سريع للتجربة:** جهازك + نفق Cloudflare (`cloudflared tunnel --url http://localhost:3001`).
+- بعد النشر: حدّث `FRONTEND_URL`/`ALLOWED_ORIGINS` وزر القائمة عبر `setChatMenuButton`.

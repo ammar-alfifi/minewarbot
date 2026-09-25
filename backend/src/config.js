@@ -33,6 +33,9 @@ export const config = {
   frontendUrl,
   allowedOrigins,
   dataFile: process.env.DATA_FILE || path.join(__dirname, '..', 'data', 'players.json'),
+  // json (افتراضي) أو sqlite — نفس واجهة المستودع بلا تغيير في قواعد اللعبة
+  storage: (process.env.STORAGE || 'json').toLowerCase() === 'sqlite' ? 'sqlite' : 'json',
+  sqliteFile: process.env.SQLITE_FILE || path.join(__dirname, '..', 'data', 'minewarr.db'),
   sessionSecret,
   initDataMaxAgeSec: Number(process.env.INIT_DATA_MAX_AGE_SEC) || 24 * 3600,
   allowGuest: process.env.ALLOW_GUEST ? process.env.ALLOW_GUEST === 'true' : !isProd,
@@ -48,6 +51,8 @@ export function configSummary() {
     frontendUrl: config.frontendUrl,
     allowedOrigins: config.allowedOrigins,
     guestMode: config.allowGuest,
+    storage: config.storage,
+    storageFile: config.storage === 'sqlite' ? config.sqliteFile : config.dataFile,
     initDataMaxAgeSec: config.initDataMaxAgeSec,
   };
 }

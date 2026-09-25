@@ -6,6 +6,9 @@
   "scripts": {
     "dev": "node --watch src/server.js",
     "start": "node src/server.js",
+    "start:sqlite": "STORAGE=sqlite node src/server.js",
+    "backup": "node scripts/backup.mjs export",
+    "restore": "node scripts/backup.mjs import",
     "test": "node --test test/*.test.js"
   },
   "dependencies": {

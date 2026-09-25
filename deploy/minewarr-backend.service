@@ -1,0 +1,20 @@
+[Unit]
+Description=Mine War — سيرفر اللعبة والبوت (API + Telegraf)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/telegram-miniapp/backend
+ExecStart=/usr/bin/env node src/server.js
+Environment=NODE_ENV=production
+Environment=STORAGE=sqlite
+EnvironmentFile=-%h/telegram-miniapp/backend/.env
+Restart=always
+RestartSec=3
+# تسجيل بسيط
+StandardOutput=append:%h/.local/share/minewarr/backend.log
+StandardError=append:%h/.local/share/minewarr/backend.log
+
+[Install]
+WantedBy=default.target

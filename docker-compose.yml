@@ -1,0 +1,34 @@
+# ============================================================================
+# تشغيل Mine War بحاوية واحدة (API + بوت + واجهة مبنية) مع بيانات دائمة.
+# الاستخدام:
+#   1) أنشئ ملف .env بجانب هذا الملف وضع فيه BOT_TOKEN و FRONTEND_URL
+#   2) docker compose up -d --build
+# ============================================================================
+
+services:
+  minewarr:
+    build: .
+    image: minewarr:latest
+    container_name: minewarr
+    restart: unless-stopped
+    init: true
+    ports:
+      - "3001:3001"
+    environment:
+      NODE_ENV: production
+      PORT: "3001"
+      SERVE_FRONTEND: "true"
+      TRUST_PROXY: "true"
+      STORAGE: sqlite
+      SQLITE_FILE: /data/minewarr.db
+      ALLOW_GUEST: "false"
+      BOT_TOKEN: ${BOT_TOKEN:?ضع BOT_TOKEN في ملف .env بجانب docker-compose}
+      BOT_USERNAME: ${BOT_USERNAME:-MineWarrBot}
+      FRONTEND_URL: ${FRONTEND_URL:?ضع FRONTEND_URL (رابط https العام)}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      SESSION_SECRET: ${SESSION_SECRET:-}
+    volumes:
+      - minewarr-data:/data
+
+volumes:
+  minewarr-data:

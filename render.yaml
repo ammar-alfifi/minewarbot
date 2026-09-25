@@ -1,0 +1,42 @@
+# ============================================================================
+# Render Blueprint — نشر بنقرة واحدة.
+# ملاحظات مهمة:
+#  * الخطة المجانية "free" تُنيم الخدمة عند الخمول => يتوقف البوت حتى أول طلب،
+#    لذلك للبوت الدائم استخدم plan: starter أو Fly/Oracle (انظر DEPLOY.md).
+#  * القرص (disk) غير مدعوم في الخطة المجانية، وهو ضروري لحفظ تقدم اللاعبين.
+# ============================================================================
+
+services:
+  - type: web
+    name: minewarrbot
+    runtime: docker
+    plan: starter
+    healthCheckPath: /api/health
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: SERVE_FRONTEND
+        value: "true"
+      - key: TRUST_PROXY
+        value: "true"
+      - key: STORAGE
+        value: sqlite
+      - key: SQLITE_FILE
+        value: /data/minewarr.db
+      - key: ALLOW_GUEST
+        value: "false"
+      - key: BOT_USERNAME
+        value: MineWarrBot
+      - key: BOT_TOKEN
+        sync: false
+      - key: FRONTEND_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      - key: SESSION_SECRET
+        generateValue: true
+    disk:
+      name: minewarr-data
+      mountPath: /data
+      sizeGB: 1
