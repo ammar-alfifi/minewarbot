@@ -30,17 +30,22 @@ try {
 }
 
 if (bot) {
-  // إعادة محاولة عند فشل الشبكة (متكرر على بعض بيئات الاستضافة) مع تراجع تدريجي
+  // تشغيل البوت: فحص اتصال مسبق بمهلة واضحة + إعادة محاولة بتراجع تدريجي.
+  // (Telegraf يستخدم node-fetch بلا مهلة افتراضية، وقد يعلق على شبكة متقطعة.)
   let botAttempt = 0;
   const launchBot = async () => {
     try {
+      const meRes = await fetch(`https://api.telegram.org/bot${config.botToken}/getMe`, { signal: AbortSignal.timeout(15000) });
+      const me = await meRes.json();
+      if (!me.ok) throw new Error(`Telegram getMe: ${me.error_code} ${me.description}`);
+      await fetch(`https://api.telegram.org/bot${config.botToken}/deleteWebhook`, { method: 'POST', signal: AbortSignal.timeout(15000) });
       await bot.launch();
       botAttempt = 0;
       console.log(`🤖 البوت @${config.botUsername} يعمل (polling)`);
     } catch (err) {
       botAttempt += 1;
       const delayMs = Math.min(60_000, 5_000 * botAttempt);
-      logError(`⚠️  فشل تشغيل البوت (محاولة ${botAttempt}) — إعادة المحاولة خلال ${Math.round(delayMs / 1000)} ث:`, err);
+      logError(`⚠️  تعذّر تشغيل البوت (محاولة ${botAttempt}) — إعادة المحاولة خلال ${Math.round(delayMs / 1000)} ث:`, err);
       setTimeout(launchBot, delayMs);
     }
   };
