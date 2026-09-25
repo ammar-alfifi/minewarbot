@@ -7,13 +7,8 @@
 // ============================================================================
 
 const SCHEMA_VERSION = 2;
-const SCHEMA = `
-  CREATE TABLE IF NOT EXISTS state (
-    id INTEGER PRIMARY KEY CHECK (id = 1),
-    data TEXT NOT NULL,
-    rev INTEGER NOT NULL
-  );
-`;
+// جملة واحدة (D1.exec يجزّئ حسب الأسطر — لذا ننفّذها بـ prepare().run())
+const SCHEMA = 'CREATE TABLE IF NOT EXISTS state (id INTEGER PRIMARY KEY CHECK (id = 1), data TEXT NOT NULL, rev INTEGER NOT NULL);';
 
 function emptyDoc() {
   return { version: SCHEMA_VERSION, players: {}, meta: {} };
@@ -45,7 +40,7 @@ export function createD1Store(db) {
   if (!db) throw new Error('ربط D1 مفقود (env.DB) — أنشئ قاعدة D1 واربطها بالمشروع');
 
   let ready = null;
-  const ensure = () => (ready ||= db.exec(SCHEMA));
+  const ensure = () => (ready ||= db.prepare(SCHEMA).run());
 
   const loadRow = () => db.prepare('SELECT data, rev FROM state WHERE id = 1').first();
 
