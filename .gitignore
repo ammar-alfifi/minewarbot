@@ -18,3 +18,7 @@ backend/data/*.db-wal
 backend/data/*.db-shm
 .env
 
+# Cloudflare / wrangler (حالة محلية ومخازن مؤقتة)
+.wrangler/
+.dev.vars
+
