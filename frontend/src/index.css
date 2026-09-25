@@ -522,6 +522,22 @@ button { font-family: inherit; }
   box-shadow: var(--shadow);
   text-align: center;
   animation: pop 0.22s ease;
+  max-height: 62vh;
+  overflow-y: auto;
+}
+.tour-exit {
+  position: fixed;
+  top: calc(10px + env(safe-area-inset-top));
+  left: 12px;
+  z-index: 132;
+  background: color-mix(in srgb, var(--bg-2) 92%, transparent);
+  border: 1px solid var(--line);
+  color: var(--text);
+  border-radius: 999px;
+  padding: 7px 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
 }
 .tour-card.centered {
   position: fixed;
