@@ -152,6 +152,20 @@ try {
   else ok(`التعدين: +${mine.result.coins} عملة`);
   if (!daily.ok) bad('الحفرة اليومية');
   else ok(`الحفرة اليومية: ${daily.result.label}`);
+
+  // اختيار عنوان الـ API حسب بيئة التشغيل (المشكلة التي منعت الفتح داخل تيليجرام)
+  const checkApiBase = async (label, location, expected) => {
+    globalThis.window = { location };
+    try {
+      const mod = await load(`/src/api.js?case=${encodeURIComponent(label)}`);
+      if (mod.api.base === expected) ok(`عنوان API (${label}) = ${expected}`);
+      else bad(`عنوان API (${label}): ${mod.api.base} بدل ${expected}`);
+    } catch (err) {
+      bad(`عنوان API (${label})`, err);
+    }
+  };
+  await checkApiBase('تطوير Vite', { protocol: 'http:', hostname: 'localhost', port: '5173', origin: 'http://localhost:5173' }, 'http://localhost:3001');
+  await checkApiBase('نفق/إنتاج', { protocol: 'https:', hostname: 'x.trycloudflare.com', port: '', origin: 'https://x.trycloudflare.com' }, 'https://x.trycloudflare.com');
 } finally {
   await vite.close();
   await new Promise((resolve) => server.close(resolve));
