@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createJsonStore } from '../src/store.js';
 import { createEngine, GameError } from '../src/game/engine.js';
-import { REGIONS, REBIRTH } from '../src/game/rules.js';
+import { REGIONS, REBIRTH, rebirthThreshold, manualRequirement, RUN_MINED_CAP, rebirthConditions } from '../src/game/rules.js';
 
 const HOUR = 3600_000;
 
@@ -457,6 +457,37 @@ test('لوحة الصدارة: ثروة ومجموعة وموسم ورفاق', a
   assert.equal(wealth.entries.find((e) => e.isMe).playerId, 'tg_a');
 });
 
+test('لاعب عائد بعد غياب الموسم يظهر بنقاطه فور أول كسب في الأسبوع الحالي', async () => {
+  const { engine, store, clock } = setup();
+  await engine.session(who('tg_1'));
+  // نُبعد weekId الشخصي أسبوعين للخلف مع بقاء النقاط (حالة حساب خامل لم يشارك).
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.season = { weekId: Math.max(0, Math.floor(clock.t / (7 * 24 * 3600 * 1000)) - 2), score: 0 };
+    p.gems = 0;
+  });
+  const before = await engine.getState('tg_1');
+  assert.equal(before.player.season.weekId, Math.floor(clock.t / (7 * 24 * 3600 * 1000)), 'حالة اللاعب تعرض أسبوعه الحالي');
+  assert.equal(before.player.season.endsAt, (before.player.season.weekId + 1) * 7 * 24 * 3600 * 1000, 'نهاية الموسم متسقة مع الأسبوع الحالي');
+
+  const m = await engine.mine('tg_1', 5, 'req_season_return');
+  assert.ok(m.player.season.score > 0, 'النقاط الجديدة تُحتسب في أسبوعه الحالي');
+  const board = await engine.leaderboard('season', 'tg_1');
+  const me = board.entries.find((e) => e.playerId === 'tg_1');
+  assert.ok(me, 'اللاعب يظهر في ترتيب الموسم بعد أول كسب');
+  assert.equal(me.score, m.player.season.score, 'النقاط المعروضة تطابق نقاط اللاعب');
+});
+
+test('بطاقة المتصدرين تعرض وسام البعث وعدد مرات البعث', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1', 'باعث'));
+  await store.mutate((doc) => { doc.players.tg_1.rebirthCount = 5; });
+  const board = await engine.leaderboard('wealth', 'tg_1');
+  const me = board.entries.find((e) => e.playerId === 'tg_1');
+  assert.equal(me.rebirths, 5, 'عدد مرات البعث ظاهر اجتماعياً');
+  assert.equal(me.badge.id, 'keeper', 'وسام البعث الصحيح حسب العدد');
+});
+
 test('الصندوق الجماعي يُمنح تلقائياً للمساهمين عند بلوغ الهدف', async () => {
   const { engine, store } = setup();
   await engine.session(who('tg_1'));
@@ -696,7 +727,7 @@ test('البعث يعيد تأسيس المنجم ويحوّل الإنجاز إ
   assert.equal(res.player.equipment.pickaxe, 1);
   assert.deepEqual(res.player.regionsUnlocked, ['surface']);
   assert.equal(res.player.rebirth.runMined, 0);
-  assert.equal(res.player.rebirth.threshold, 250_000_000, 'العتبة التالية ×5');
+  assert.equal(res.player.rebirth.threshold, 150_000_000, 'العتبة التالية ×3');
   assert.equal(res.player.legacy.cores, 1, 'نواة واحدة عند 1× العتبة');
   // ما يبقى دائمًا
   assert.equal(res.player.gems, 40);
@@ -735,6 +766,42 @@ test('حالة البعث تعرض عدد المناطق والعتبة القا
   const st = await engine.getState('tg_1');
   assert.equal(st.player.rebirth.conditions.regions, false, 'التكرار لا يستوفي شرط كل المناطق');
   assert.equal(st.player.rebirth.cycleGoals.goals.find((g) => g.id === 'cyc_regions_8').progress, 1, 'تقدّم هدف المناطق يحسب الفريد فقط');
+});
+
+test('شرط التعدين اليدوي يتصاعد مع عتبة الدورة ويبقى نسبة ثابتة', async () => {
+  // الدورة الأولى: الحد الأدنى المطلق (10M = 20% من 50M).
+  assert.equal(manualRequirement(rebirthThreshold(0)), REBIRTH.manualThreshold);
+  // الدورة الثانية: 20% من 150M = 30M، أكبر من الحد الأدنى.
+  assert.equal(manualRequirement(rebirthThreshold(1)), 30_000_000);
+  // الشرط يبقى دائماً 20% على الأقل من العتبة المتصاعدة.
+  for (let c = 0; c < 8; c++) {
+    const th = rebirthThreshold(c);
+    const req = manualRequirement(th);
+    assert.ok(req >= Math.floor(th * REBIRTH.manualShare), `نسبة الشرط اليدوي محفوظة في الدورة ${c + 1}`);
+  }
+  // الدخل الخامل لا يفي بشرط الدورة الثانية لو توقف العدّاد اليدوي.
+  const idleOnly = { rebirthCount: 1, runMined: rebirthThreshold(1), runManualMined: REBIRTH.manualThreshold, equipment: { pickaxe: 20 }, workers: 10, regionsUnlocked: REGIONS.map((r) => r.id) };
+  assert.equal(rebirthConditions(idleOnly).conditions.manual, false, 'الحد الأدنى المطلق وحده لا يكفي بعد الدورة الأولى');
+});
+
+test('عتبات البعث لا تتجاوز سقف العدّاد فتبقى الدورات قابلة للإنجاز', async () => {
+  // العتبة تنمو ×3 والسقف 10^18: يجب أن تبقى دورة 11 (الحالية) ممكنة، وأن تسمح بأكثر من 15 دورة.
+  assert.ok(rebirthThreshold(10) <= RUN_MINED_CAP, 'الدورة الحادية عشرة قابلة للإنجاز');
+  assert.ok(rebirthThreshold(15) <= RUN_MINED_CAP, 'يوجد مجال لأكثر من 15 دورة');
+  // مكافأة النوى الثلاث متاحة عند 4× العتبة في كل هذه الدورات.
+  for (let c = 10; c < 15; c++) assert.ok(rebirthThreshold(c) * 4 <= RUN_MINED_CAP, `نوى 3× متاحة في دورة ${c + 1}`);
+});
+
+test('مكافآت النوى 1/2/3 عند 1×/2×/4× العتبة', async () => {
+  const { engine } = setup();
+  await engine.session(who('tg_1'));
+  const th = rebirthThreshold(0);
+  const st1 = rebirthConditions({ rebirthCount: 0, runMined: th, runManualMined: manualRequirement(th), equipment: { pickaxe: 20 }, workers: 10 });
+  assert.equal(st1.cores, 1);
+  const st2 = rebirthConditions({ rebirthCount: 0, runMined: th * 2, runManualMined: manualRequirement(th), equipment: { pickaxe: 20 }, workers: 10 });
+  assert.equal(st2.cores, 2);
+  const st3 = rebirthConditions({ rebirthCount: 0, runMined: th * 4, runManualMined: manualRequirement(th), equipment: { pickaxe: 20 }, workers: 10 });
+  assert.equal(st3.cores, 3);
 });
 
 test('شجرة نوى الإرث: شراء بالأنوية بحدود المستويات', async () => {

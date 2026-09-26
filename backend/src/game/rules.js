@@ -675,44 +675,60 @@ export function seasonRewardFor(rankIndex, participantCount) {
 export const REBIRTH = {
   name: 'بعث المنجم',
   emoji: '🌅',
-  baseThreshold: 50_000_000,   // تعدين الدورة الأولى
-  manualThreshold: 10_000_000, // منها تعدين يدوي نشط (العمّال وحدهم لا يكفون)
-  thresholdMult: 5,            // كل دورة = ×5
+  baseThreshold: 50_000_000,       // تعدين الدورة الأولى
+  manualThreshold: 10_000_000,     // الحد الأدنى المطلق للتعدين اليدوي
+  manualShare: 0.2,                // وكحد أدنى: 20% من عتبة الدورة (يحفظ معنى الشرط مع تصاعد العتبات)
+  thresholdMult: 3,                // كل دورة = ×3 (تصاعد أبطأ من السقف الثقيل: دورات أكثر قابلة للإنجاز)
   minPickaxe: 20,
   minWorkers: 10,
+  coresThresholdMult: 2,           // الأساس=1 نواة، 2×=2 نوى، 4×=3 نوى
   maxCores: 3,
   keepNote: 'يبقى دائماً: الآثار والمجموعة، الجواهر، الألقاب، الأصدقاء والإحالات، مجموع التعدين مدى الحياة، الإنجازات، سجل المواسم، مساهمة الجماعة، وسجل الغارات. لا تُصفَّر مؤقتات الحفرة اليومية وسلسلة الزيارة والدرع.',
   resetNote: 'يُصفَّر لبدء منجم جديد: العملات، العمّال، مستويات المعدات والمرافق، المنطقة الحالية والمناطق المفتوحة في الدورة، وعدّادا تعدين الدورة.',
 };
 
+/** عتبة تعدين الدورة رقم cycles (نمو هندسي ×thresholdMult). */
 export function rebirthThreshold(cycles) {
   return REBIRTH.baseThreshold * Math.pow(REBIRTH.thresholdMult, Math.max(0, Math.floor(cycles) || 0));
 }
 
-/** مكافأة النوى: 1 عند العتبة، 2 عند 5×، 3 عند 25× — بسقف 3. */
+/**
+ * شرط التعدين اليدوي النشط للدورة: نسبة من عتبة الدورة بحد أدنى مطلق.
+ * يمنع أن يصبح الدخل الخامل وحده كافياً في الدورات المتأخرة.
+ */
+export function manualRequirement(threshold) {
+  return Math.max(REBIRTH.manualThreshold, Math.floor(threshold * REBIRTH.manualShare));
+}
+
+/** مكافأة النوى: 1 عند العتبة، 2 عند 2×، 3 عند 4× — بسقف 3. */
 export function rebirthCores(runMined, threshold) {
   const ratio = threshold > 0 ? Number(runMined || 0) / threshold : 0;
-  if (ratio >= 25) return 3;
-  if (ratio >= 5) return 2;
+  if (ratio >= Math.pow(REBIRTH.coresThresholdMult, 2)) return 3; // 4×
+  if (ratio >= REBIRTH.coresThresholdMult) return 2;               // 2×
   if (ratio >= 1) return 1;
   return 0;
 }
 
+/** سقف عدّاد تعدين الدورة: يكفي لإنجاز أكبر عدد دورات مقصود بحد النوى. */
+export const RUN_MINED_CAP = 1e18;
+
 /** شروط أهلية البعث للدورة الحالية. */
 export function rebirthConditions(player) {
   const threshold = rebirthThreshold(player.rebirthCount || 0);
+  const manualThreshold = manualRequirement(threshold);
   // نعدّ المناطق الفريدة الصالحة فقط، فلا يخدع التكرار/المعرّفات القديمة شرط «كل المناطق».
   const regionsSet = new Set((player.regionsUnlocked || []).filter((r) => REGIONS.some((x) => x.id === r)));
   const allRegions = regionsSet.size >= REGIONS.length;
   const cond = {
     regions: allRegions,
     runMined: Number(player.runMined || 0) >= threshold,
-    manual: Number(player.runManualMined || 0) >= REBIRTH.manualThreshold,
+    manual: Number(player.runManualMined || 0) >= manualThreshold,
     pickaxe: (player.equipment?.pickaxe || 1) >= REBIRTH.minPickaxe,
     workers: (player.workers || 0) >= REBIRTH.minWorkers,
   };
   return {
     threshold,
+    manualThreshold,
     conditions: cond,
     eligible: Object.values(cond).every(Boolean),
     cores: rebirthCores(player.runMined, threshold),
@@ -725,6 +741,11 @@ export function qualifiesForRebirthSeed(player) {
     && (player.regionsUnlocked || []).length >= REGIONS.length
     && (player.equipment?.pickaxe || 1) >= REBIRTH.minPickaxe
     && (player.workers || 0) >= REBIRTH.minWorkers;
+}
+
+/** التعدين اليدوي الممنوح لحساب قديم عند الترحيل = شرط الدورة الأولى. */
+export function seedManualMined() {
+  return manualRequirement(rebirthThreshold(0));
 }
 
 // ---------------------------------------------------------------------------

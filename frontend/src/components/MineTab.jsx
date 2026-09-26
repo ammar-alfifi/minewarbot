@@ -14,7 +14,8 @@ export default function MineTab({ game }) {
   const boostActive = player.power.boostActive;
   const nextRegion = player.goals.nextRegion;
   const nextMilestone = player.goals.nextMilestone;
-  const regionProgress = nextRegion ? Math.min(player.stats.totalMined, nextRegion.unlockTotalMined) : 1;
+  // شريط المنطقة القادمة يتبع عدّاد الدورة نفسه الذي يفتح المناطق، لا مجموع الحياة.
+  const regionProgress = nextRegion ? Math.min(player.rebirth?.runMined ?? player.stats.totalMined, nextRegion.unlockTotalMined) : 1;
   const event = player.power.event;
 
   const onDaily = async () => {
@@ -48,8 +49,8 @@ export default function MineTab({ game }) {
               <div className="desc">{player.region.tagline}</div>
               {player.region.specialty && (
                 <div className="small muted mt8">
-                  🎯 {player.region.specialty.specialty?.label} +{Math.round(player.region.specialty.specialty.value * 100)}%
-                  {player.region.specialty.special ? ` · ⭐ ${player.region.specialty.special.label} +${Math.round(player.region.specialty.special.value * 100)}%` : ''}
+                  🎯 {t('regionBonus.' + player.region.specialty.specialty?.key)} +{Math.round(player.region.specialty.specialty.value * 100)}%
+                  {player.region.specialty.special ? ` · ⭐ ${t('regionBonus.' + player.region.specialty.special.key)} +${Math.round(player.region.specialty.special.value * 100)}%` : ''}
                 </div>
               )}
             </div>

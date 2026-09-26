@@ -106,9 +106,16 @@ export default function FriendsTab({ game, catalog }) {
           ))}
         </div>
         <p className="card-sub">
-          {player.group.chestReached
-            ? `🎉 ${t('friends.chestReached', { g: player.group.chestGems })}`
-            : t('friends.chestPending', { g: player.group.chestGems })}
+          {player.group.chest?.eligible
+            ? `🎉 ${t('friends.chestEligible', { g: player.group.chestGems, min: player.group.chest?.minContribution ?? 5000 })}`
+            : player.group.chest?.targetReached
+              ? t('friends.chestSumReached', {
+                  n: Math.max(0, (player.group.chest.required || 0) - (player.group.chest.capable || 0)),
+                  min: player.group.chest?.minContribution ?? 5000,
+                })
+              : t('friends.chestNeedSum', {
+                  left: short(Math.max(0, player.group.target - player.group.contributed)),
+                })}
         </p>
       </div>
 
@@ -159,6 +166,7 @@ export default function FriendsTab({ game, catalog }) {
                 </div>
                 <div className="lb-sub">
                   {entry.title?.emoji} {entry.title?.name} · {entry.regionEmoji} {entry.relics}🏺
+                  {entry.badge && entry.rebirths > 0 && <> · {entry.badge.emoji} {entry.badge.name}</>}
                   {entry.raidEstimate != null && <> · {t('friends.estimate')} {entry.raidEstimate}%</>}
                   {entry.potentialLoot > 0 && <> · 💰 {short(entry.potentialLoot)}</>}
                 </div>
