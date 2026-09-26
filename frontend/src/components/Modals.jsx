@@ -105,6 +105,8 @@ export default function Modals({ game, catalog, onStartTour }) {
         case 'group_chest': return `🕳️ ${t('friends.chestReached', { g: n.data.gems })}`;
         case 'season_win': return `👑 فزت بموسم الأسبوع الماضي! (${num(n.data.score)} نقطة من ${n.data.total} لاعباً)`;
         case 'season_top': return `🥈 المركز ${n.data.rank} في موسم الأسبوع الماضي!`;
+        case 'season_reward': return `🎖️ جائزة موسم الأسبوع الماضي (المركز ${n.data.rank}): +${n.data.gems} 💎`;
+        case 'rebirth': return `🌅 بعث المنجم! حصلت على ${n.data.cores} ✨ نوى إرث (الرصيد: ${n.data.legacyCores}).`;
         case 'invite_reward': return `🎁 ${n.data.name} انضم بفضل دعوتك: +${n.data.gems} 💎`;
         default: return n.type;
       }
@@ -142,12 +144,46 @@ export default function Modals({ game, catalog, onStartTour }) {
         <div className="body">{t('friends.raidDetails')}</div>
         <div className="card tight" style={{ textAlign: 'start' }}>
           {entry.raidEstimate != null && <div className="small">🎯 {t('friends.estimate')}: <b>{entry.raidEstimate}%</b></div>}
-          {entry.potentialLoot != null && entry.potentialLoot > 0 && <div className="small mt8">💰 {t('friends.loot')}: <b>{num(entry.potentialLoot)} 🪙</b></div>}
+          {entry.potentialLoot != null && entry.potentialLoot > 0 && (
+            <div className="small mt8">
+              💰 {t('friends.loot')}: <b>{num(entry.potentialLoot)} 🪙</b>
+              {entry.potentialLootSeconds != null && <span className="muted"> · {t('friends.lootMinutes', { m: entry.potentialLootSeconds })}</span>}
+            </div>
+          )}
+          {!revenge && player?.raid?.lossOnFail > 0 && (
+            <div className="small mt8" style={{ color: 'var(--danger, #ef4444)' }}>⚠️ {t('friends.risk')}: <b>{num(player.raid.lossOnFail)} 🪙</b></div>
+          )}
+          {entry.protected && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ {t('friends.protectedHint')}</div>}
           {shielded && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ الخصم محمي — لا يمكن الهجوم الآن.</div>}
         </div>
         <div className="flex" style={{ gap: 8 }}>
           <button className="btn ghost grow" onClick={close}>{t('modals.cancel')}</button>
-          <button className="btn danger grow" disabled={busy || shielded} onClick={onGo}>{t('modals.raidGo')}</button>
+          <button className="btn danger grow" disabled={busy || shielded || entry.protected || player?.raid?.protected} onClick={onGo}>{t('modals.raidGo')}</button>
+        </div>
+      </Sheet>
+    );
+  }
+
+  if (modal.type === 'rebirth') {
+    const rb = player.rebirth;
+    if (!rb) return null; // حماية: حالة قديمة مخبّأة بلا بيانات بعث لا تُسقط التطبيق
+    const onGo = async () => {
+      close();
+      const res = await actions.rebirth();
+      if (res) pushToast(`✨ ${t('rebirth.doRebirth')} — ${res.result.cores} ${t('rebirth.coresNow')}`, 'success');
+    };
+    return (
+      <Sheet onClose={close} wide>
+        <div className="big-emoji">🌅</div>
+        <div className="head">{t('rebirth.title')}</div>
+        <div className="card tight" style={{ textAlign: 'start' }}>
+          <div className="small">🧬 {t('rebirth.cores')}: <b>{rb.cores} ✨</b></div>
+          <div className="small muted mt8">♻️ {rb.resetNote}</div>
+          <div className="small muted mt8">🔒 {rb.keepNote}</div>
+        </div>
+        <div className="flex" style={{ gap: 8 }}>
+          <button className="btn ghost grow" onClick={close}>{t('modals.cancel')}</button>
+          <button className="btn primary grow" disabled={busy} onClick={onGo}>✨ {t('rebirth.doRebirth')}</button>
         </div>
       </Sheet>
     );
@@ -162,7 +198,7 @@ export default function Modals({ game, catalog, onStartTour }) {
     return (
       <Sheet onClose={close} wide>
         <div className="head center">🌍 {t('mine.change')}</div>
-        <p className="card-sub center">المنطقة تحدد مضاعف الإنتاج ومجموعة الآثار المحتملة.</p>
+        <p className="card-sub center">المنطقة تحدد مضاعف الإنتاج ومجموعة الآثار المحتملة، ولكل منطقة تخصص عائد مختلف.</p>
         {catalog.regions.map((region) => {
           const unlocked = player.regionsUnlocked.includes(region.id);
           const current = player.region.id === region.id;
@@ -175,6 +211,12 @@ export default function Modals({ game, catalog, onStartTour }) {
                   {current && <span className="tag me">الحالية</span>}
                 </div>
                 <div className="desc">{unlocked ? region.tagline : `${t('mine.locked')} — ${t('mine.unlockAt')} ${short(region.unlockTotalMined)} 🪙`}</div>
+                {region.specialty && (
+                  <div className="small muted mt8">
+                    🎯 {region.specialty.specialty?.label} +{Math.round(region.specialty.specialty.value * 100)}%
+                    {region.specialty.special ? ` · ⭐ ${region.specialty.special.label} +${Math.round(region.specialty.special.value * 100)}%` : ''}
+                  </div>
+                )}
                 <div className="small muted mt8">آثار: {region.relics.map((id) => catalog.relics.find((r) => r.id === id)?.emoji).join(' ')}</div>
               </div>
               {unlocked && !current && (
@@ -216,6 +258,7 @@ export default function Modals({ game, catalog, onStartTour }) {
         <p className="card-sub">💰 لا يوجد شراء حقيقي: الجواهر تُجمع باللعب فقط.</p>
         <p className="card-sub">🔒 {t('help.footer')}</p>
         <button className="btn ghost big mt12" onClick={() => { close(); onStartTour?.(); }}>🎓 {t('tutorial.replay')}</button>
+        <button className="btn ghost big mt8" onClick={() => { actions.logout?.(); }}>🚪 {t('modals.logout')}</button>
         <button className="btn primary big mt8" onClick={close}>{t('modals.close')}</button>
       </Sheet>
     );

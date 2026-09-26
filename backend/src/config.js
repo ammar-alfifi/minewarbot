@@ -40,6 +40,8 @@ export const config = {
   sqliteFile: process.env.SQLITE_FILE || path.join(__dirname, '..', 'data', 'minewarr.db'),
   sessionSecret,
   initDataMaxAgeSec: Number(process.env.INIT_DATA_MAX_AGE_SEC) || 24 * 3600,
+  // عمر توكن الجلسة: أقصر افتراضياً (7 أيام) لتقليل أثر سرقة التوكن
+  sessionMaxAgeMs: Number(process.env.SESSION_MAX_AGE_MS) || 7 * 24 * 3600 * 1000,
   allowGuest: process.env.ALLOW_GUEST ? process.env.ALLOW_GUEST === 'true' : !isProd,
   serveFrontend: process.env.SERVE_FRONTEND ? process.env.SERVE_FRONTEND === 'true' : true,
   trustProxy: process.env.TRUST_PROXY ? process.env.TRUST_PROXY === 'true' : isProd,

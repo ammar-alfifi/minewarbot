@@ -8,6 +8,7 @@ export default function TabBar({ tab, setTab, badges = {} }) {
     ['upgrades', '🛠️', t('tabs.upgrades')],
     ['friends', '🤝', t('tabs.friends')],
     ['collection', '🏺', t('tabs.collection')],
+    ['rebirth', '✨', t('tabs.rebirth')],
   ];
   return (
     <nav className="tabbar" role="tablist" aria-label="أقسام اللعبة">

@@ -222,3 +222,21 @@ test('حماية الجسم: JSON تالف يرجع 400 واضحاً', async () 
   const data = await res.json();
   assert.equal(data.code, 'bad_json');
 });
+
+test('الطلبات التي تغيّر الحالة تتطلب requestId صالحاً', async () => {
+  const res = await post('/api/actions/mine', { taps: 1 }, { Authorization: `Bearer ${ctx.guestToken}` });
+  assert.equal(res.status, 400);
+  const data = await res.json();
+  assert.equal(data.code, 'bad_request_id');
+});
+
+test('تسجيل الخروج يُبطل التوكن السابق عبر HTTP', async () => {
+  const created = await post('/api/session', {});
+  const { token } = await created.json();
+  const before = await get('/api/state', { Authorization: `Bearer ${token}` });
+  assert.equal(before.status, 200);
+  const out = await post('/api/actions/logout', {}, { Authorization: `Bearer ${token}` });
+  assert.equal(out.status, 200);
+  const after = await get('/api/state', { Authorization: `Bearer ${token}` });
+  assert.equal(after.status, 401, 'التوكن أُبطل بعد تسجيل الخروج');
+});

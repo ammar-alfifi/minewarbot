@@ -84,8 +84,8 @@ async function sign(payload, secret) {
 }
 
 /** توكن جلسة موقّع: يحمل هوية مشتقة من initData الموثّق أو من وضع الضيف. */
-export async function issueSessionToken(secret, { playerId, mode = 'guest', name = '', now = Date.now() }) {
-  const payload = utf8ToBase64url(JSON.stringify({ p: playerId, m: mode, n: String(name || '').slice(0, 30), iat: now }));
+export async function issueSessionToken(secret, { playerId, mode = 'guest', name = '', epoch = 0, now = Date.now() }) {
+  const payload = utf8ToBase64url(JSON.stringify({ p: playerId, m: mode, n: String(name || '').slice(0, 30), e: Number(epoch) || 0, iat: now }));
   return `${payload}.${await sign(payload, secret)}`;
 }
 
@@ -104,6 +104,7 @@ export async function verifySessionToken(token, secret, { maxAgeMs = 30 * 24 * 3
       playerId: data.p,
       mode: data.m === 'telegram' ? 'telegram' : 'guest',
       name: typeof data.n === 'string' ? data.n : '',
+      epoch: Number(data.e) || 0,
     };
   } catch {
     return { ok: false, reason: 'توكن تالف' };

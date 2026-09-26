@@ -1,7 +1,54 @@
 // غلاف آمن حول Telegram WebApp SDK — كل شيء يعمل بتراجع رشيق خارج تيليجرام.
-import WebApp from '@twa-dev/sdk';
+//
+// تنبيه مهم: حزمة @twa-dev/sdk تقرأ window.Telegram.WebApp وقت تحميل الوحدة،
+// فإن لم يكن سكربت تيليجرام قد اكتمل (أو حجبه المتصفح)، يرمي استثناءً يُسقط
+// التطبيق كاملاً قبل أن يبدأ React. لذلك لا نعتمد عليها في الوصول للـ SDK،
+// بل نقرأ النافذة بتأخير (lazy) مع بديل آمن.
 
-export const tg = WebApp;
+const FALLBACK = {
+  initData: '',
+  initDataUnsafe: {},
+  colorScheme: 'dark',
+  version: '',
+  ready() {},
+  expand() {},
+  setHeaderColor() {},
+  setBackgroundColor() {},
+  disableVerticalSwipes() {},
+  onEvent() {},
+  offEvent() {},
+  HapticFeedback: { impactOccurred() {}, notificationOccurred() {}, selectionChanged() {} },
+  showAlert(_msg, cb) { try { if (typeof window !== 'undefined' && window.alert) window.alert(String(_msg)); } catch {} cb?.(); },
+  showConfirm(_msg, cb) { cb?.(true); },
+  openTelegramLink() {},
+  openLink() {},
+  MainButton: { hide() {}, show() {} },
+};
+
+/** يعيد كائن WebApp الحقيقي إن توفّر، وإلا بديلاً آمناً — بلا أي استثناء. */
+function resolveWebApp() {
+  try {
+    const w = globalThis.window;
+    const real = w && w.Telegram && w.Telegram.WebApp;
+    if (real) return real;
+  } catch {
+    // متصفح عادي أو SDK محجوب: نتجاهل بهدوء
+  }
+  return FALLBACK;
+}
+
+// وكيل يقرأ الكائن الحقيقي عند كل وصول، فيبقى صالحاً حتى لو تأخر تحميل السكربت
+// أو اكتمل بعد تركيب React (مشكلة سبّبت تعذّر فتح المنجم سابقاً).
+export const tg = new Proxy(FALLBACK, {
+  get(_target, prop) {
+    const real = resolveWebApp();
+    const value = real[prop];
+    return typeof value === 'function' ? value.bind(real) : value;
+  },
+  has(_target, prop) {
+    return prop in resolveWebApp();
+  },
+});
 
 let initialized = false;
 

@@ -14,6 +14,16 @@ import { handleTelegramUpdate } from './telegram.js';
 import { timingSafeEqualStr } from './crypto.js';
 
 const str = (v, max = 64) => (typeof v === 'string' ? v.slice(0, max) : '');
+const REQUEST_ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
+
+/** معرّف طلب صالح إلزامي لكل عملية تغيّر الحالة (يمنع التنفيذ المزدوج). */
+function requestIdOf(body) {
+  const id = str(body?.requestId, 64);
+  if (!REQUEST_ID_RE.test(id)) {
+    throw new GameError('معرّف الطلب مفقود أو غير صالح — أعد المحاولة', 400, 'bad_request_id');
+  }
+  return id;
+}
 
 const JSON_HEADERS = {
   'content-type': 'application/json; charset=utf-8',
@@ -61,6 +71,29 @@ function displayName(user) {
   return (full || user.username || 'منقّب').slice(0, 30);
 }
 
+// ---- حدود معدّل عامة (best-effort داخل نسخة الـ isolate) --------------------
+const ipHits = new Map();
+const actionHits = new Map();
+function hit(map, key, windowMs, max) {
+  const now = Date.now();
+  const entry = map.get(key);
+  if (!entry || now - entry.start >= windowMs) {
+    if (map.size > 5000) {
+      for (const [k, v] of map) if (now - v.start >= windowMs) map.delete(k);
+    }
+    map.set(key, { start: now, count: 1 });
+    return true;
+  }
+  entry.count += 1;
+  return entry.count <= max;
+}
+function clientIp(request) {
+  const direct = request.headers.get('cf-connecting-ip');
+  if (direct) return direct;
+  const fwd = request.headers.get('x-forwarded-for');
+  return fwd ? fwd.split(',')[0].trim() : 'unknown';
+}
+
 // ---- حدّ تعدين بسيط لكل نسخة (best-effort على الـ Edge) ----------------------
 const mineState = new Map();
 function mineAllowed(playerId, taps) {
@@ -86,7 +119,7 @@ async function readJson(request) {
   }
 }
 
-async function resolveIdentity(request, config, body) {
+async function resolveIdentity(request, config, body, engine) {
   const initData = str(request.headers.get('x-init-data') || body?.initData, 8192);
   let initError = null;
   if (initData) {
@@ -108,8 +141,12 @@ async function resolveIdentity(request, config, body) {
 
   const auth = str(request.headers.get('authorization'), 600);
   if (auth.startsWith('Bearer ')) {
-    const result = await verifySessionToken(auth.slice(7), config.sessionSecret);
+    const result = await verifySessionToken(auth.slice(7), config.sessionSecret, { maxAgeMs: config.sessionMaxAgeMs });
     if (result.ok) {
+      // نسخة الجلسة: تسجيل الخروج يرفعها فيُبطل كل التوكنات السابقة
+      if (!(await engine.sessionValid(result.playerId, result.epoch))) {
+        throw new GameError(initError || 'انتهت الجلسة — أعد فتح التطبيق', 401, initError ? 'invalid_init_data' : 'invalid_token');
+      }
       return {
         identity: { playerId: result.playerId, name: result.name || null, photoUrl: null, mode: result.mode },
         startParam: null,
@@ -124,6 +161,9 @@ async function resolveIdentity(request, config, body) {
 
 function requireIdentity(resolved) {
   if (!resolved) throw new GameError('سجّل الدخول أولاً (افتح التطبيق من تيليجرام)', 401, 'no_auth');
+  if (!hit(actionHits, resolved.identity.playerId, 10_000, 80)) {
+    throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+  }
   return resolved;
 }
 
@@ -149,6 +189,7 @@ async function handleApi(request, env, ctx, url) {
     botUsername: (env.BOT_USERNAME || 'MineWarrBot').replace(/^@/, ''),
     sessionSecret,
     initDataMaxAgeSec: Number(env.INIT_DATA_MAX_AGE_SEC) || 24 * 3600,
+    sessionMaxAgeMs: Number(env.SESSION_MAX_AGE_MS) || 7 * 24 * 3600 * 1000,
     allowGuest: env.ALLOW_GUEST === 'true',
   };
   const store = createD1Store(env.DB);
@@ -156,6 +197,12 @@ async function handleApi(request, env, ctx, url) {
 
   const pathname = url.pathname.replace(/\/+$/, '') || '/api';
   const method = request.method;
+  if (Number(request.headers.get('content-length') || 0) > 64 * 1024) {
+    return json({ ok: false, error: 'الطلب كبير جداً', code: 'payload_too_large' }, 413);
+  }
+  if (!hit(ipHits, clientIp(request), 60_000, 180)) {
+    return json({ ok: false, error: 'طلبات كثيرة — انتظر قليلاً', code: 'rate_limited' }, 429);
+  }
   const body = method === 'POST' ? await readJson(request) : null;
 
   // ---- صحة الخدمة ----------------------------------------------------------
@@ -190,7 +237,7 @@ async function handleApi(request, env, ctx, url) {
   // ---- الجلسة --------------------------------------------------------------
   if (pathname === '/api/session' && method === 'POST') {
     return run(async () => {
-      const resolved = await resolveIdentity(request, config, body);
+      const resolved = await resolveIdentity(request, config, body, engine);
       let identity;
       let startParam = null;
 
@@ -218,6 +265,7 @@ async function handleApi(request, env, ctx, url) {
         playerId: identity.playerId,
         mode: identity.mode,
         name: identity.name,
+        epoch: result.sessionEpoch,
       });
       return { ...result, token, mode: identity.mode };
     });
@@ -226,7 +274,7 @@ async function handleApi(request, env, ctx, url) {
   // ---- الحالة --------------------------------------------------------------
   if (pathname === '/api/state' && method === 'GET') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, null));
+      const { identity } = requireIdentity(await resolveIdentity(request, config, null, engine));
       return engine.getState(identity.playerId);
     });
   }
@@ -234,63 +282,92 @@ async function handleApi(request, env, ctx, url) {
   // ---- التعدين -------------------------------------------------------------
   if (pathname === '/api/actions/mine' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
       const taps = Math.max(1, Math.min(25, Number(body?.taps) || 1));
       if (!mineAllowed(identity.playerId, taps)) throw new GameError('تعدين أسرع من اللازم — لحظة!', 429, 'mine_throttled');
-      return engine.mine(identity.playerId, taps, str(body?.requestId, 64) || null);
+      return engine.mine(identity.playerId, taps, requestIdOf(body));
     });
   }
 
   // ---- الترقيات ------------------------------------------------------------
   if (pathname === '/api/actions/upgrade' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
-      return engine.upgrade(identity.playerId, str(body?.item, 32), Number(body?.amount) || 1, str(body?.requestId, 64) || null);
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.upgrade(identity.playerId, str(body?.item, 32), Number(body?.amount) || 1, requestIdOf(body));
     });
   }
 
   // ---- الغارات -------------------------------------------------------------
   if (pathname === '/api/actions/raid' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
-      return engine.raid(identity.playerId, str(body?.targetId, 64), str(body?.requestId, 64) || null, { revenge: Boolean(body?.revenge) });
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.raid(identity.playerId, str(body?.targetId, 64), requestIdOf(body), { revenge: Boolean(body?.revenge) });
     });
   }
 
   // ---- الحفرة اليومية ------------------------------------------------------
   if (pathname === '/api/actions/daily' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
-      return engine.dailyDig(identity.playerId, str(body?.requestId, 64) || null);
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.dailyDig(identity.playerId, requestIdOf(body));
     });
   }
 
   // ---- المطالبات -----------------------------------------------------------
   if (pathname === '/api/actions/claim' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
-      return engine.claim(identity.playerId, str(body?.kind, 16), str(body?.id, 32), str(body?.requestId, 64) || null);
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.claim(identity.playerId, str(body?.kind, 16), str(body?.id, 32), requestIdOf(body));
     });
   }
 
   // ---- المنطقة والألقاب ----------------------------------------------------
   if (pathname === '/api/actions/region' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
-      return engine.switchRegion(identity.playerId, str(body?.regionId, 32), str(body?.requestId, 64) || null);
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.switchRegion(identity.playerId, str(body?.regionId, 32), requestIdOf(body));
     });
   }
 
   if (pathname === '/api/actions/title' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
-      return engine.setTitle(identity.playerId, str(body?.titleId, 32), str(body?.requestId, 64) || null);
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.setTitle(identity.playerId, str(body?.titleId, 32), requestIdOf(body));
+    });
+  }
+
+  // ---- بعث المنجم وشجرة الإرث ومتجر التجميل --------------------------------
+  if (pathname === '/api/actions/rebirth' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.rebirth(identity.playerId, requestIdOf(body));
+    });
+  }
+
+  if (pathname === '/api/actions/legacy' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.legacyUpgrade(identity.playerId, str(body?.trackId, 32), requestIdOf(body));
+    });
+  }
+
+  if (pathname === '/api/actions/cosmetic' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.buyCosmetic(identity.playerId, str(body?.cosmeticId, 32), requestIdOf(body));
+    });
+  }
+
+  if (pathname === '/api/actions/cycle-goal' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.claimCycleGoal(identity.playerId, str(body?.goalId, 32), requestIdOf(body));
     });
   }
 
   if (pathname === '/api/actions/notices' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
       const ids = Array.isArray(body?.ids) ? body.ids.slice(0, 20).map((x) => str(x, 64)) : [];
       return engine.clearNotices(identity.playerId, ids);
     });
@@ -299,17 +376,17 @@ async function handleApi(request, env, ctx, url) {
   // ---- الجولة التعليمية ----------------------------------------------------
   if (pathname === '/api/actions/tutorial' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
-      return engine.completeTutorial(identity.playerId, str(body?.requestId, 64) || null);
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.completeTutorial(identity.playerId, requestIdOf(body));
     });
   }
 
   // ---- لوحة الصدارة --------------------------------------------------------
   if (pathname === '/api/leaderboard' && method === 'GET') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, null));
+      const { identity } = requireIdentity(await resolveIdentity(request, config, null, engine));
       const requested = url.searchParams.get('scope');
-      const scope = ['wealth', 'collection', 'season', 'friends'].includes(requested) ? requested : 'wealth';
+      const scope = ['wealth', 'collection', 'season', 'friends', 'nearby'].includes(requested) ? requested : 'wealth';
       const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 50));
       return engine.leaderboard(scope, identity.playerId, limit);
     });
@@ -317,7 +394,7 @@ async function handleApi(request, env, ctx, url) {
 
   if (pathname === '/api/raidlog' && method === 'GET') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, null));
+      const { identity } = requireIdentity(await resolveIdentity(request, config, null, engine));
       return engine.raidLog(identity.playerId);
     });
   }
@@ -325,8 +402,16 @@ async function handleApi(request, env, ctx, url) {
   // ---- الدعوات -------------------------------------------------------------
   if (pathname === '/api/invites' && method === 'POST') {
     return run(async () => {
-      const { identity } = requireIdentity(await resolveIdentity(request, config, body));
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
       return engine.invite(identity.playerId);
+    });
+  }
+
+  // ---- تسجيل الخروج: يُبطل كل التوكنات السابقة لهذا اللاعب ------------------
+  if (pathname === '/api/actions/logout' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.logout(identity.playerId);
     });
   }
 

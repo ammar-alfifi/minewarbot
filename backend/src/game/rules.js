@@ -117,6 +117,60 @@ export const REGIONS = [
   },
 ];
 
+// ---------------------------------------------------------------------------
+// تخصصات المناطق (المرحلة 3): كل منطقة تميل لنوع عائد مختلف، فالعمق ليس دائماً
+// هو الأفضل. التخصص الأساسي +10% والمكافأة الخاصة لا تتجاوز +15%.
+// ---------------------------------------------------------------------------
+
+export const REGION_SPECIALTIES = {
+  surface: {
+    specialty: { key: 'gem', label: 'لمعان الاكتشاف', value: 0.10 },
+    special: { key: 'relic', label: 'آثار المدخل', value: 0.10 },
+  },
+  coal: {
+    specialty: { key: 'idle', label: 'كثافة العمّال', value: 0.10 },
+    special: { key: 'manual', label: 'سواعد الفحم', value: 0.15 },
+  },
+  crystal: {
+    specialty: { key: 'gem', label: 'شفافية الكريستال', value: 0.10 },
+    special: { key: 'relic', label: 'صدى الآثار', value: 0.10 },
+  },
+  iron: {
+    specialty: { key: 'manual', label: 'صلابة الحديد', value: 0.10 },
+    special: { key: 'idle', label: 'آلات الحديد', value: 0.10 },
+  },
+  goldcity: {
+    specialty: { key: 'idle', label: 'ورش المدينة', value: 0.10 },
+    special: { key: 'gem', label: 'بريق الذهب', value: 0.10 },
+  },
+  lava: {
+    specialty: { key: 'manual', label: 'ضربات اللافا', value: 0.10 },
+    special: { key: 'relic', label: 'آثار محترقة', value: 0.15 },
+  },
+  frost: {
+    specialty: { key: 'offline', label: 'سكون متجمد', value: 0.10 },
+    special: { key: 'gem', label: 'بلورات الجليد', value: 0.10 },
+  },
+  abyss: {
+    specialty: { key: 'relic', label: 'كنوز الهاوية', value: 0.10 },
+    special: { key: 'idle', label: 'أيادٍ من الظل', value: 0.15 },
+  },
+};
+
+export function regionSpecialty(regionId) {
+  return REGION_SPECIALTIES[regionId] || null;
+}
+
+/** مجموع مكافأة نوع عائد معيّن في منطقة: التخصص الأساسي + المكافأة الخاصة. */
+export function regionOutputBonus(regionId, key) {
+  const s = REGION_SPECIALTIES[regionId];
+  if (!s) return 0;
+  let bonus = 0;
+  if (s.specialty && s.specialty.key === key) bonus += s.specialty.value;
+  if (s.special && s.special.key === key) bonus += s.special.value;
+  return bonus;
+}
+
 export const RELICS = {
   fossil_shell: { id: 'fossil_shell', name: 'صدفة متحجرة', emoji: '🐚', rarity: 'common', region: 'surface', flavor: 'كان هنا بحرٌ قبل أن يصير حجراً.' },
   old_coin: { id: 'old_coin', name: 'عملة قديمة', emoji: '🪙', rarity: 'common', region: 'surface', flavor: 'عليها وجهٌ لا يعرفه أحد.' },
@@ -247,7 +301,7 @@ export const OFFLINE = {
 };
 
 export function offlineCapHours(player) {
-  return FACILITIES.storage.effect(player.facilities.storage).offlineCapHours;
+  return FACILITIES.storage.effect(player.facilities.storage).offlineCapHours + legacyBonus(player).offlineHours;
 }
 
 export function applyUpgrades(target, upgrades) {
@@ -277,23 +331,33 @@ export function powerOf(player, now = Date.now()) {
   const region = regionById(player.regionId);
   const event = eventOfWeek(now);
   const boostActive = player.boostUntil > now;
+  const legacy = legacyBonus(player);
+  const regionManual = 1 + regionOutputBonus(region.id, 'manual');
+  const regionIdle = 1 + regionOutputBonus(region.id, 'idle');
 
-  const manualBase = (eq.manualPower || 1) * (fac.manualMult || 1) * region.coinMult;
+  const manualBase = (eq.manualPower || 1) * (fac.manualMult || 1) * region.coinMult * legacy.coinMult * legacy.manualMult * regionManual;
   const manual = manualBase * (event.manualMult || 1) * (boostActive ? BOOST.multiplier : 1);
-  const workerEach = WORKER.baseRate(player.equipment.pickaxe) * (fac.workerMult || 1) * region.coinMult;
-  const idlePerSec = player.workers * workerEach * (event.idleMult || 1);
+  const workerEach = WORKER.baseRate(player.equipment.pickaxe) * (fac.workerMult || 1) * region.coinMult * legacy.coinMult;
+  const idlePerSec = player.workers * workerEach * (event.idleMult || 1) * regionIdle;
   const findMult = eq.findMult || 1;
 
-  return { manual, manualBase, workerEach, idlePerSec, findMult, boostActive, region, event };
+  return { manual, manualBase, workerEach, idlePerSec, findMult, boostActive, region, event, legacy };
 }
 
 export function findChances(player, now = Date.now()) {
   const { region, findMult } = powerOf(player, now);
   const event = eventOfWeek(now);
+  const gemRegion = 1 + regionOutputBonus(region.id, 'gem');
+  const relicRegion = 1 + regionOutputBonus(region.id, 'relic');
   return {
-    gemPerTap: region.gemChance * findMult * (event.gemMult || 1),
-    relicPerTap: region.relicChance * findMult * (event.relicMult || 1),
+    gemPerTap: region.gemChance * findMult * (event.gemMult || 1) * gemRegion,
+    relicPerTap: region.relicChance * findMult * (event.relicMult || 1) * relicRegion,
   };
+}
+
+/** مضاعف دخل الغياب حسب تخصص المنطقة (يُطبَّق على دخل العمّال أثناء الغياب فقط). */
+export function offlineIncomeMult(player) {
+  return 1 + regionOutputBonus(regionById(player.regionId).id, 'offline');
 }
 
 // ---------------------------------------------------------------------------
@@ -367,41 +431,82 @@ export function pickRelic(regionId, rng = Math.random) {
 
 export const RAID = {
   cooldownMs: 10 * 60 * 1000,
-  dailySuccessCap: 5,
-  perTargetCooldownMs: 6 * 60 * 1000,
-  baseSuccess: 0.55,
-  minSuccess: 0.25,
-  maxSuccess: 0.8,
-  stealPct: 0.05,
-  stealCapBase: 100,
-  stealCapPerRegion: 40,
+  dailyAttempts: 8,               // 8 محاولات/يوم (الفشل يُحسب) — كل محاولة قرار
+  perTargetCooldownMs: 15 * 60 * 1000,
+  baseSuccess: 0.5,
+  minSuccess: 0.15,
+  maxSuccess: 0.9,
+  powerSwing: 0.35,               // أثر فارق القوة على فرصة النجاح (أوسع من قبل)
+  // الغنيمة: نسبة من مخزون الضحية بسقفَين مرتبطَين بالإنتاج — لا رقم ثابت
+  vaultPct: 0.3,                  // مخزون محمي لا يُلمس أبداً
+  sharePct: 0.12,                 // نسبة المخزون القابلة للسرقة
+  victimLootSeconds: 15 * 60,     // ≤ 15 دقيقة من إنتاج الضحية
+  attackerLootSeconds: 60 * 60,   // ≤ 60 دقيقة من إنتاج المهاجم
+  // مخاطرة المهاجم عند الفشل (قرار حقيقي بدل رمية مجانية)
+  failureLossPct: 0.1,            // 10% من مخزونه
+  failureLossSeconds: 10 * 60,    // ≤ 10 دقائق من إنتاجه
+  failureVaultPct: 0.2,           // لا يهبط تحت 20% من مخزونه
+  defenseRewardShare: 0.6,        // 60% من الخسارة تعويض للضحية، والباقي يُحرق (مصرف عملات)
   revengeStealMult: 1.25,
   revengeSuccessBonus: 0.1,
   revengeWindowMs: 24 * 60 * 60 * 1000,
-  shieldOnRaidMs: 3 * 60 * 60 * 1000,
+  shieldOnRaidMs: 60 * 60 * 1000, // درع أقصر: الغارات تبقى ممكنة
+  shieldCapMs: 4 * 60 * 60 * 1000,
   minDefenderBalance: 50,
   minSteal: 5,
   logLimit: 20,
+  newPlayerProtectionMined: 10000, // حماية المبتدئين: لا يهاجمون ولا يُهاجَمون قبل هذه العتبة
+  seasonBasePoints: 250,           // نقاط موسم أساسية للغارة الناجحة
+  seasonMaxBonus: 1500,            // + مكافأة حسب الغنيمة (تصل الغارات بسباق الموسم)
 };
+
+/** أقصى إنتاج لحظي معقول (عملة/ث): دخل العمّال + سقف التعدين اليدوي المستدام (8/ث). */
+export function productionPerSec(player, now = Date.now()) {
+  const power = powerOf(player, now);
+  return power.idlePerSec + 8 * power.manualBase;
+}
 
 export function raidSuccessChance(attacker, target, isRevenge = false, now = Date.now()) {
   const a = powerOf(attacker, now).manual;
   const d = powerOf(target, now).manual;
   const swing = a + d > 0 ? (a - d) / (a + d) : 0;
-  let chance = RAID.baseSuccess + swing * 0.3 + (isRevenge ? RAID.revengeSuccessBonus : 0);
+  let chance = RAID.baseSuccess + swing * RAID.powerSwing + (isRevenge ? RAID.revengeSuccessBonus : 0);
   chance = Math.max(RAID.minSuccess, Math.min(RAID.maxSuccess, chance));
   return chance;
 }
 
+/** الغنيمة المحتملة عند نجاح الغارة — تتناسب مع اقتصاد الطرفين لا مع رقم ثابت. */
 export function stealAmount(attacker, target, isRevenge = false, now = Date.now()) {
   const def = applyUpgrades(EQUIPMENT, target.equipment).raidDefense || 0;
-  const cap = RAID.stealCapBase + RAID.stealCapPerRegion * regionIndex(attacker.regionId);
-  let amount = Math.floor((target.coins || 0) * RAID.stealPct * (isRevenge ? RAID.revengeStealMult : 1));
-  amount = Math.min(amount, cap);
+  const bank = target.coins || 0;
+  const vault = Math.floor(bank * RAID.vaultPct);
+  const spendable = Math.max(0, bank - vault);
+  const fromBank = Math.floor(bank * RAID.sharePct);
+  const byVictim = Math.floor(productionPerSec(target, now) * RAID.victimLootSeconds);
+  const byAttacker = Math.floor(productionPerSec(attacker, now) * RAID.attackerLootSeconds);
+  let amount = Math.min(fromBank, spendable, byVictim, byAttacker);
+  if (isRevenge) amount = Math.floor(amount * RAID.revengeStealMult);
   amount = Math.floor(amount * (1 - def));
-  const floor = Math.min(RAID.minDefenderBalance, target.coins || 0);
-  amount = Math.min(amount, Math.max(0, (target.coins || 0) - floor));
-  return amount;
+  return Math.max(0, Math.min(amount, spendable));
+}
+
+/** خسارة المهاجم عند فشل الغارة — تُلغى في الثأر. */
+export function raidFailureLoss(attacker, now = Date.now()) {
+  const bank = attacker.coins || 0;
+  const floor = Math.floor(bank * RAID.failureVaultPct);
+  const spendable = Math.max(0, bank - floor);
+  const loss = Math.min(
+    Math.floor(bank * RAID.failureLossPct),
+    Math.floor(productionPerSec(attacker, now) * RAID.failureLossSeconds),
+  );
+  return Math.max(0, Math.min(loss, spendable));
+}
+
+/** نقاط الموسم للغارة الناجحة: أساس ثابت + مكافأة نسبية من الغنيمة. */
+export function raidSeasonPoints(loot, attacker, now = Date.now()) {
+  const prod = Math.max(1, productionPerSec(attacker, now));
+  const bonus = Math.min(RAID.seasonMaxBonus, Math.floor((loot / prod) * 2));
+  return RAID.seasonBasePoints + bonus;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +515,7 @@ export function stealAmount(attacker, target, isRevenge = false, now = Date.now(
 
 export const DAILY = {
   cooldownMs: 24 * 60 * 60 * 1000,
-  shieldMs: 4 * 60 * 60 * 1000,
+  shieldMs: 60 * 60 * 1000,
   visitGapMs: 48 * 60 * 60 * 1000,
   rewards: [
     { id: 'coins_small', label: 'عملات', weight: 55 },
@@ -433,6 +538,22 @@ export const VISIT_REWARDS = [
   { day: 6, coins: 1500, gems: 0 },
   { day: 7, coins: 0, gems: 5 },
 ];
+
+// بعد إكمال سلسلة السبعة: مكافأة اليوم السابع (الجواهر) أسبوعية بحد واضح،
+// وباقي الزيارات تمنح عملات فقط حتى لا تتضخم الجواهر بلا مصرف.
+export const VISIT_REPEAT = {
+  coins: 2500,
+  note: 'بعد إكمال الأسبوع تتكرر جواهر اليوم السابع كل 7 أيام، وفي بقية الزيارات تحصل على عملات بدل الجواهر.',
+};
+
+export function visitDayReward(day, lastGemAt, now) {
+  const reward = VISIT_REWARDS[Math.max(1, Math.min(7, day)) - 1] || VISIT_REWARDS[0];
+  if (day < 7 || !reward.gems) return { reward, repeat: false };
+  if (lastGemAt && now - lastGemAt < WEEK_MS) {
+    return { reward: { day: 7, coins: VISIT_REPEAT.coins, gems: 0 }, repeat: true };
+  }
+  return { reward, repeat: false };
+}
 
 export function visitStreakAfter(lastVisitAt, currentStreak, now) {
   if (!lastVisitAt) return 1;
@@ -493,14 +614,232 @@ export const GROUP_GOAL = {
   target: 250000,
   name: 'الحفرة الجماعية',
   emoji: '🕳️',
-  desc: 'كل منقّب يضيف ما عدّنه. عند بلوغ الهدف يحصل كل مساهم على صندوق جماعي.',
+  desc: 'كل منقّب يضيف ما عدّنه يدوياً. عند بلوغ الهدف يحصل كل مساهم على صندوق جماعي.',
   chestGems: 3,
+  // هدف يحتاج مساهمين متعددين: 3 على الأقل إن توفّروا، ولكل منهم 5,000 مساهمة.
+  minContributors: 3,
+  minContributionPerPlayer: 5000,
   tiers: [
     { id: 'g1', contribution: 1000, gems: 2, label: 'مساهم' },
     { id: 'g2', contribution: 10000, gems: 5, label: 'مساهم ذهبي' },
     { id: 'g3', contribution: 50000, gems: 12, label: 'عمود الجماعة' },
   ],
 };
+
+/**
+ * حالة الصندوق الجماعي: الهدف الإجمالي + مساهمون كافيون كلٌّ بلغ الحد الأدنى.
+ * إن كان عدد المساهمين أقل من 3 يُخفض المطلوب إلى min(3, عدد المساهمين) حتى
+ * لا يصبح الصندوق مستحيلاً في مجتمع صغير.
+ */
+export function groupChestStatus(group) {
+  const byPlayer = (group && group.byPlayer) || {};
+  const contributors = Object.entries(byPlayer).filter(([, c]) => Number(c) > 0);
+  const capable = contributors.filter(([, c]) => Number(c) >= GROUP_GOAL.minContributionPerPlayer);
+  const required = Math.min(GROUP_GOAL.minContributors, Math.max(1, contributors.length));
+  const targetReached = Number(group?.contributed || 0) >= GROUP_GOAL.target;
+  return {
+    targetReached,
+    contributors: contributors.length,
+    capable: capable.length,
+    required,
+    minContribution: GROUP_GOAL.minContributionPerPlayer,
+    eligible: targetReached && capable.length >= required,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// جوائز الموسم — مشاركة وتتويج "أفضل 10%" وبطل الأسبوع (شكلية بالجواهر القليلة)
+// ---------------------------------------------------------------------------
+
+export const SEASON_REWARDS = {
+  participationScore: 5000,
+  participationGems: 2,
+  topPct: 0.1,
+  topGems: 5,
+  winnerGems: 10,
+  note: 'جائزة مشاركة عند 5,000 نقطة، وتتويج لأفضل 10%، وجائزة خاصة للأول. لا تمنح نوى بعث ولا أرقاماً تصنع تضخماً.',
+};
+
+/** يحدد جائزة مركز موحّد حسب الترتيب (0-based) وعدد المشاركين. */
+export function seasonRewardFor(rankIndex, participantCount) {
+  if (rankIndex === 0) return { kind: 'winner', gems: SEASON_REWARDS.winnerGems };
+  const topCount = Math.max(1, Math.ceil(participantCount * SEASON_REWARDS.topPct));
+  if (rankIndex < topCount) return { kind: 'top', gems: SEASON_REWARDS.topGems };
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// بعث المنجم — Rebirth: الحلقة الطويلة بعد فتح كل المناطق
+// ---------------------------------------------------------------------------
+
+export const REBIRTH = {
+  name: 'بعث المنجم',
+  emoji: '🌅',
+  baseThreshold: 50_000_000,   // تعدين الدورة الأولى
+  manualThreshold: 10_000_000, // منها تعدين يدوي نشط (العمّال وحدهم لا يكفون)
+  thresholdMult: 5,            // كل دورة = ×5
+  minPickaxe: 20,
+  minWorkers: 10,
+  maxCores: 3,
+  keepNote: 'يبقى دائماً: الآثار والمجموعة، الجواهر، الألقاب، الأصدقاء والإحالات، مجموع التعدين مدى الحياة، الإنجازات، سجل المواسم، مساهمة الجماعة، وسجل الغارات. لا تُصفَّر مؤقتات الحفرة اليومية وسلسلة الزيارة والدرع.',
+  resetNote: 'يُصفَّر لبدء منجم جديد: العملات، العمّال، مستويات المعدات والمرافق، المنطقة الحالية والمناطق المفتوحة في الدورة، وعدّادا تعدين الدورة.',
+};
+
+export function rebirthThreshold(cycles) {
+  return REBIRTH.baseThreshold * Math.pow(REBIRTH.thresholdMult, Math.max(0, Math.floor(cycles) || 0));
+}
+
+/** مكافأة النوى: 1 عند العتبة، 2 عند 5×، 3 عند 25× — بسقف 3. */
+export function rebirthCores(runMined, threshold) {
+  const ratio = threshold > 0 ? Number(runMined || 0) / threshold : 0;
+  if (ratio >= 25) return 3;
+  if (ratio >= 5) return 2;
+  if (ratio >= 1) return 1;
+  return 0;
+}
+
+/** شروط أهلية البعث للدورة الحالية. */
+export function rebirthConditions(player) {
+  const threshold = rebirthThreshold(player.rebirthCount || 0);
+  // نعدّ المناطق الفريدة الصالحة فقط، فلا يخدع التكرار/المعرّفات القديمة شرط «كل المناطق».
+  const regionsSet = new Set((player.regionsUnlocked || []).filter((r) => REGIONS.some((x) => x.id === r)));
+  const allRegions = regionsSet.size >= REGIONS.length;
+  const cond = {
+    regions: allRegions,
+    runMined: Number(player.runMined || 0) >= threshold,
+    manual: Number(player.runManualMined || 0) >= REBIRTH.manualThreshold,
+    pickaxe: (player.equipment?.pickaxe || 1) >= REBIRTH.minPickaxe,
+    workers: (player.workers || 0) >= REBIRTH.minWorkers,
+  };
+  return {
+    threshold,
+    conditions: cond,
+    eligible: Object.values(cond).every(Boolean),
+    cores: rebirthCores(player.runMined, threshold),
+  };
+}
+
+/** ترحيل محافظ: هل يستحق حساب قديم أهلية بعث أولى مكافئة عند الإطلاق؟ */
+export function qualifiesForRebirthSeed(player) {
+  return Number(player.lifetime?.totalMined || 0) >= REBIRTH.baseThreshold
+    && (player.regionsUnlocked || []).length >= REGIONS.length
+    && (player.equipment?.pickaxe || 1) >= REBIRTH.minPickaxe
+    && (player.workers || 0) >= REBIRTH.minWorkers;
+}
+
+// ---------------------------------------------------------------------------
+// أهداف الدورة (Cycle Goals) — أهداف اختيارية تُصفَّر مع كل بعث فتعطي كل دورة
+// اتجاهًا واضحًا. مكافأتها عملات مؤقتة (تساعد على تجهيز الدورة) بلا نوى ولا
+// جواهر، فلا تنشئ تضخّمًا دائمًا ولا تتجاوز سرعة الدورة الطبيعية.
+// ---------------------------------------------------------------------------
+
+export const CYCLE_GOALS = [
+  { id: 'cyc_manual_250k', type: 'runManualMined', threshold: 250000, name: 'ربع مليون باليد', emoji: '✊', reward: { coins: 3000 } },
+  { id: 'cyc_regions_5', type: 'regionsUnlocked', threshold: 5, name: 'خمس مناطق في الدورة', emoji: '🧭', reward: { coins: 5000 } },
+  { id: 'cyc_relics_3', type: 'runRelics', threshold: 3, name: 'ثلاثة آثار في الدورة', emoji: '🏺', reward: { coins: 7000 } },
+  { id: 'cyc_pickaxe_15', type: 'pickaxe', threshold: 15, name: 'معول بمستوى 15', emoji: '⛏️', reward: { coins: 6000 } },
+  { id: 'cyc_manual_2m', type: 'runManualMined', threshold: 2000000, name: 'مليونان باليد', emoji: '💪', reward: { coins: 12000 } },
+  { id: 'cyc_regions_8', type: 'regionsUnlocked', threshold: 8, name: 'كل المناطق في الدورة', emoji: '🌌', reward: { coins: 20000 } },
+];
+
+export function cycleGoalProgress(player, type) {
+  switch (type) {
+    case 'runManualMined': return Math.floor(Number(player.runManualMined || 0));
+    case 'runMined': return Math.floor(Number(player.runMined || 0));
+    case 'regionsUnlocked': return new Set((player.regionsUnlocked || []).filter((r) => REGIONS.some((x) => x.id === r))).size;
+    case 'pickaxe': return player.equipment?.pickaxe || 1;
+    case 'workers': return player.workers || 0;
+    case 'runRelics': return Math.floor(Number(player.runRelics || 0));
+    default: return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// أوسمة البعث — شكلية بحتة تُعرض حسب عدد مرات البعث، بلا أي قوة إضافية.
+// ---------------------------------------------------------------------------
+
+export const REBIRTH_BADGES = [
+  { rebirths: 0, id: 'seed', name: 'بذرة', emoji: '🌱' },
+  { rebirths: 1, id: 'sprout', name: 'باعث', emoji: '🌅' },
+  { rebirths: 3, id: 'veteran', name: 'باعث مخضرم', emoji: '🧬' },
+  { rebirths: 5, id: 'keeper', name: 'حارس الإرث', emoji: '🏛️' },
+  { rebirths: 10, id: 'eternal', name: 'خالد البعث', emoji: '♾️' },
+];
+
+/** الوسام الحالي بحسب عدد مرات البعث + الوسام التالي وكم بقي له. */
+export function rebirthBadge(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  let current = REBIRTH_BADGES[0];
+  let next = null;
+  for (const b of REBIRTH_BADGES) {
+    if (n >= b.rebirths) current = b;
+    else { next = b; break; }
+  }
+  return {
+    current,
+    next: next ? { ...next, remaining: next.rebirths - n } : null,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// شجرة نوى الإرث — دائمة ومحدودة (كل رتبة = نواة واحدة)
+// ---------------------------------------------------------------------------
+
+export const LEGACY_COST = 1;
+
+export const LEGACY_TRACKS = {
+  vein_memory: {
+    id: 'vein_memory', name: 'ذاكرة العروق', emoji: '🪨', maxRank: 4,
+    desc: '+5% على عوائد العملات من التعدين والعمال لكل رتبة.',
+    perRank: { coinMult: 0.05 },
+  },
+  digger_hand: {
+    id: 'digger_hand', name: 'يد المنقّب', emoji: '✊', maxRank: 4,
+    desc: '+5% على عوائد التعدين اليدوي فقط لكل رتبة.',
+    perRank: { manualMult: 0.05 },
+  },
+  lineage_vault: {
+    id: 'lineage_vault', name: 'مخزن السلالة', emoji: '🏗️', maxRank: 2,
+    desc: '+1 ساعة إلى حد الدخل غير المتصل لكل رتبة.',
+    perRank: { offlineHours: 1 },
+  },
+};
+
+export function legacyBonus(player) {
+  const legacy = (player && player.legacy) || {};
+  const vein = clampRank(legacy.vein_memory, LEGACY_TRACKS.vein_memory.maxRank);
+  const hand = clampRank(legacy.digger_hand, LEGACY_TRACKS.digger_hand.maxRank);
+  const vault = clampRank(legacy.lineage_vault, LEGACY_TRACKS.lineage_vault.maxRank);
+  return {
+    ranks: { vein_memory: vein, digger_hand: hand, lineage_vault: vault },
+    coinMult: 1 + vein * LEGACY_TRACKS.vein_memory.perRank.coinMult,
+    manualMult: 1 + hand * LEGACY_TRACKS.digger_hand.perRank.manualMult,
+    offlineHours: vault * LEGACY_TRACKS.lineage_vault.perRank.offlineHours,
+  };
+}
+
+export function legacyRanks(player) {
+  const bonus = legacyBonus(player);
+  return bonus.ranks;
+}
+
+function clampRank(value, max) {
+  const n = Math.floor(Number(value) || 0);
+  return Math.max(0, Math.min(max, n));
+}
+
+// ---------------------------------------------------------------------------
+// متجر التجميل — مصارف جواهر اختيارية لا تمنح تفوقاً تنافسياً
+// ---------------------------------------------------------------------------
+
+export const COSMETICS = [
+  { id: 'frame_bronze', type: 'frame', name: 'إطار برونزي', emoji: '🟤', cost: 15, desc: 'إطار ملفك الشخصي بلون النحاس.' },
+  { id: 'frame_silver', type: 'frame', name: 'إطار فضي', emoji: '⚪', cost: 30, desc: 'إطار ملفك الشخصي بلون الفضة.' },
+  { id: 'frame_gold', type: 'frame', name: 'إطار ذهبي', emoji: '🟡', cost: 60, desc: 'إطار ملفك الشخصي بلون الذهب.' },
+  { id: 'strike_spark', type: 'strike', name: 'أثر ضربة متلألئ', emoji: '✨', cost: 45, desc: 'شكل ضربة مختلف عند التعدين.' },
+  { id: 'camp_lantern', type: 'camp', name: 'فانوس المخيم', emoji: '🏮', cost: 80, desc: 'زينة نادرة لمخيمك.' },
+  { id: 'camp_aurora', type: 'camp', name: 'شفق المخيم', emoji: '🌌', cost: 150, desc: 'زينة أندر لمخيمك.' },
+];
 
 // ---------------------------------------------------------------------------
 // الإحالات

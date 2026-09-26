@@ -22,3 +22,8 @@ backend/data/*.db-shm
 .wrangler/
 .dev.vars
 
+# حالة أدوات التحرير المحلية
+# نستثني أوامر الفريق لتبقى مشتركة بين الأعضاء، ونُبقي بقية الحالة محلية
+.opencode/*
+!.opencode/commands/
+

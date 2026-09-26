@@ -164,3 +164,21 @@ test('Worker: يعيد 503 بوضوح عند غياب ربط D1', async () => {
   assert.equal(res.status, 503);
   assert.equal(res.json.code, 'no_db');
 });
+
+test('Worker: يرفض Action بلا requestId صالح', async () => {
+  const env = makeEnv();
+  const session = await call(env, '/api/session', { method: 'POST', initData: buildInitData() });
+  const bad = await call(env, '/api/actions/mine', { method: 'POST', token: session.json.token, body: { taps: 1 } });
+  assert.equal(bad.status, 400);
+  assert.equal(bad.json.code, 'bad_request_id');
+});
+
+test('Worker: تسجيل الخروج يُبطل التوكن', async () => {
+  const env = makeEnv();
+  const session = await call(env, '/api/session', { method: 'POST', initData: buildInitData() });
+  const token = session.json.token;
+  const out = await call(env, '/api/actions/logout', { method: 'POST', token, body: {} });
+  assert.equal(out.status, 200);
+  const state = await call(env, '/api/state', { token });
+  assert.equal(state.status, 401, 'التوكن أُبطل بعد تسجيل الخروج');
+});

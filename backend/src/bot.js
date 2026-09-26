@@ -9,6 +9,9 @@ import { getPublicUrl } from './publicUrl.js';
 
 const REFERRAL_PREFIX = 'ref_';
 
+/** تهريب رموز Markdown حتى لا يفسّر اسم المستخدم غير الموثوق كنص تنسيقي/رابط. */
+const escapeMd = (value) => String(value ?? '').replace(/([_*`[\]\\])/g, '\\$1');
+
 function isHttps(url) {
   return /^https:\/\//i.test(url || '');
 }
@@ -50,7 +53,7 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
 
   bot.start(async (ctx) => {
     const payload = ctx.startPayload || null;
-    await ctx.reply(welcomeText(ctx.from.first_name || 'منقّب', payload), {
+    await ctx.reply(welcomeText(escapeMd(ctx.from.first_name || 'منقّب'), payload), {
       parse_mode: 'Markdown',
       ...Markup.inlineKeyboard([[appButton(currentUrl(), payload)]]),
     });
@@ -93,7 +96,7 @@ export function createBot({ token, frontendUrl, botUsername = 'MineWarrBot', eng
       const p = state?.player;
       if (!p) throw new Error('no player');
       await ctx.reply([
-        `📊 **${p.name}**`,
+        `📊 **${escapeMd(p.name)}**`,
         `🪙 العملات: ${p.coins}`,
         `💎 الجواهر: ${p.gems}`,
         `${p.region.emoji} المنطقة: ${p.region.name}`,

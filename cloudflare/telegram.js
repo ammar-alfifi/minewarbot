@@ -6,6 +6,9 @@
 
 const REFERRAL_PREFIX = 'ref_';
 
+/** تهريب رموز Markdown حتى لا يفسّر اسم المستخدم غير الموثوق كنص تنسيقي/رابط. */
+const escapeMd = (value) => String(value ?? '').replace(/([_*`[\]\\])/g, '\\$1');
+
 function isHttps(url) {
   return /^https:\/\//i.test(url || '');
 }
@@ -35,7 +38,7 @@ export async function handleTelegramUpdate(update, { config, engine, baseUrl }) 
   if (!msg || !from || !text || !token) return;
 
   const chatId = msg.chat.id;
-  const name = from.first_name || 'منقّب';
+  const name = escapeMd(from.first_name || 'منقّب');
   const [rawCmd, ...rest] = text.split(/\s+/);
   const command = rawCmd.split('@')[0].toLowerCase();
   const payload = rest[0] || null;
@@ -114,7 +117,7 @@ export async function handleTelegramUpdate(update, { config, engine, baseUrl }) 
           const p = state?.player;
           if (p) {
             lines = [
-              `📊 **${p.name}**`,
+              `📊 **${escapeMd(p.name)}**`,
               `🪙 العملات: ${p.coins}`,
               `💎 الجواهر: ${p.gems}`,
               `${p.region.emoji} المنطقة: ${p.region.name}`,

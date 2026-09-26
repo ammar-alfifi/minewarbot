@@ -3,8 +3,12 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   upgradeCost, workerCost, workerBatchCost, powerOf, collectionScore,
-  stealAmount, raidSuccessChance, pickRelic, rollRarity, visitStreakAfter,
+  stealAmount, raidSuccessChance, productionPerSec, raidFailureLoss,
+  pickRelic, rollRarity, visitStreakAfter, visitDayReward,
   unlockedRegions, offlineCapHours, REGIONS, RELICS, RARITIES, RAID,
+  rebirthThreshold, rebirthCores, rebirthConditions, legacyBonus, groupChestStatus,
+  seasonRewardFor, regionOutputBonus, legacyRanks, SEASON_REWARDS, GROUP_GOAL, REBIRTH,
+  cycleGoalProgress, CYCLE_GOALS, rebirthBadge, REBIRTH_BADGES,
 } from '../src/game/rules.js';
 
 const basePlayer = (over = {}) => ({
@@ -49,16 +53,28 @@ test('المناطق تُفتح حسب مجموع التعدين', () => {
   assert.equal(unlockedRegions(4_000_000).length, REGIONS.length);
 });
 
-test('الغارة تحترم السقف وأرضية الضحية', () => {
+test('الغارة: غنيمة نسبية من المخزون مع مخزن محمي', () => {
   const attacker = basePlayer({ playerId: 'a', regionId: 'coal' });
   const target = basePlayer({ playerId: 'b', coins: 10_000 });
-  // 5% من 10000 = 500، والسقف = 100 + 40 = 140
-  assert.equal(stealAmount(attacker, target, false, 0), 140);
-  // الهدف فقير: 5% من 60 = 3 فقط، ولو سمحت الأرضية بـ10
+  // 12% من 10000 = 1200 (أقل من سقفَي الإنتاج ومن المخزون القابل للسرقة)
+  assert.equal(stealAmount(attacker, target, false, 0), 1200);
+  // من 1000: 12% = 120، والضحية تحتفظ بالمخزن المحمي (30%) وبأكثر
+  const mid = basePlayer({ playerId: 'm', coins: 1000 });
+  assert.equal(stealAmount(attacker, mid, false, 0), 120);
+  // الثأر يضاعف النسبة ×1.25
+  assert.equal(stealAmount(attacker, mid, true, 0), 150);
+  // الفقير: 12% من 60 = 7 فقط
   const poor = basePlayer({ playerId: 'c', coins: 60 });
-  assert.equal(stealAmount(attacker, poor, false, 0), 3);
-  const broke = basePlayer({ playerId: 'd', coins: 40 });
-  assert.equal(stealAmount(attacker, broke, false, 0), 0);
+  assert.equal(stealAmount(attacker, poor, false, 0), 7);
+});
+
+test('مقياس الإنتاج ومخاطرة الفشل محسوبان في القواعد', () => {
+  const p = basePlayer();
+  assert.ok(productionPerSec(p, 0) >= 8, 'الإنتاج لا يقل عن سقف التعدين اليدوي (8/ث)');
+  const rich = basePlayer({ coins: 100_000 });
+  const loss = raidFailureLoss(rich, 0);
+  assert.ok(loss > 0);
+  assert.ok(loss <= Math.floor(100_000 * RAID.failureLossPct), 'الخسارة ضمن 10% من المخزون');
 });
 
 test('فرصة الغارة محدودة بين 25% و80%', () => {
@@ -103,4 +119,148 @@ test('سلسلة الزيارة ودّية: تتجدد بعد 48 ساعة وتح
   assert.equal(visitStreakAfter(1000, 3, 1000 + 24 * H), 4);
   assert.equal(visitStreakAfter(1000, 7, 1000 + 24 * H), 7);
   assert.equal(visitStreakAfter(1000, 5, 1000 + 49 * H), 1);
+});
+
+test('مكافأة اليوم السابع: جواهر مرة كل أسبوع، وعملات في بقية الزيارات', () => {
+  const W = 7 * 24 * 3600_000;
+  const now = 10 * W;
+  // أول يوم سابع: جواهر أصلية
+  const first = visitDayReward(7, 0, now);
+  assert.equal(first.repeat, false);
+  assert.equal(first.reward.gems, 5);
+  // زيارة قريبة بعدها: لا جواهر بل عملات
+  const repeated = visitDayReward(7, now - 3600_000, now);
+  assert.equal(repeated.repeat, true);
+  assert.equal(repeated.reward.gems, 0);
+  assert.ok(repeated.reward.coins > 0);
+  // بعد مرور 7 أيام تعود الجواهر
+  const weekly = visitDayReward(7, now - W - 1000, now);
+  assert.equal(weekly.repeat, false);
+  assert.equal(weekly.reward.gems, 5);
+});
+
+test('عتبات البعث تتصاعد ×5 ومكافأة النوى عند 1× و5× و25×', () => {
+  assert.equal(rebirthThreshold(0), REBIRTH.baseThreshold);
+  assert.equal(rebirthThreshold(1), REBIRTH.baseThreshold * 5);
+  assert.equal(rebirthCores(0, 100), 0);
+  assert.equal(rebirthCores(100, 100), 1);
+  assert.equal(rebirthCores(500, 100), 2);
+  assert.equal(rebirthCores(2500, 100), 3);
+  assert.equal(rebirthCores(999999, 100), 3, 'سقف المكافأة 3 نوى');
+});
+
+test('شروط البعث تجمع المناطق والتعدين اليدوي والمعدات', () => {
+  const ready = {
+    rebirthCount: 0, runMined: REBIRTH.baseThreshold, runManualMined: REBIRTH.manualThreshold,
+    regionsUnlocked: REGIONS.map((r) => r.id), equipment: { pickaxe: REBIRTH.minPickaxe },
+    workers: REBIRTH.minWorkers,
+  };
+  assert.equal(rebirthConditions(ready).eligible, true);
+  // الدخل الخامل وحده لا يكفي: التعدين اليدوي ناقص
+  const idleOnly = { ...ready, runManualMined: 0 };
+  assert.equal(rebirthConditions(idleOnly).eligible, false);
+  assert.equal(rebirthConditions(idleOnly).conditions.manual, false);
+});
+
+test('شروط البعث: كل شرط عند الحدّ بالضبط يستوفي، وأقل بواحد يمنع', () => {
+  const ready = () => ({
+    rebirthCount: 0, runMined: REBIRTH.baseThreshold, runManualMined: REBIRTH.manualThreshold,
+    regionsUnlocked: REGIONS.map((r) => r.id), equipment: { pickaxe: REBIRTH.minPickaxe },
+    workers: REBIRTH.minWorkers,
+  });
+  assert.equal(rebirthConditions(ready()).eligible, true, 'عند الحدود بالضبط مؤهل');
+  const below = {
+    runMined: (p) => { p.runMined = REBIRTH.baseThreshold - 1; },
+    manual: (p) => { p.runManualMined = REBIRTH.manualThreshold - 1; },
+    pickaxe: (p) => { p.equipment.pickaxe = REBIRTH.minPickaxe - 1; },
+    workers: (p) => { p.workers = REBIRTH.minWorkers - 1; },
+    regions: (p) => { p.regionsUnlocked = REGIONS.slice(0, -1).map((r) => r.id); },
+  };
+  for (const [name, mutate] of Object.entries(below)) {
+    const p = ready(); mutate(p);
+    const st = rebirthConditions(p);
+    assert.equal(st.eligible, false, `نقص ${name} يمنع الأهلية`);
+    assert.equal(st.conditions[name], false, `الشرط ${name} يجب أن يكون false`);
+  }
+  // عتبة الدورة التالية تتبع مضاعف القواعد لا رقماً مثبّتاً في أي مكان
+  assert.equal(rebirthConditions({ ...ready(), rebirthCount: 1 }).threshold, REBIRTH.baseThreshold * REBIRTH.thresholdMult);
+});
+
+test('تخصصات المناطق تغيّر العائد ولا تجمع كل المكافآت في الأعمق', () => {
+  // منطقة يدوية ومنطقة عمالية تعطيان مكافأتين مختلفتين
+  assert.ok(regionOutputBonus('iron', 'manual') > 0);
+  assert.equal(regionOutputBonus('iron', 'gem'), 0);
+  assert.ok(regionOutputBonus('goldcity', 'idle') > 0);
+  // كل تخصص لا يزيد عن 10% والمكافأة الخاصة عن 15%
+  for (const r of REGIONS) {
+    const s = regionOutputBonus(r.id, 'manual') + regionOutputBonus(r.id, 'idle');
+    assert.ok(s <= 0.25, `مكافآت ${r.id} مرتفعة`);
+  }
+});
+
+test('شجرة الإرث دائمة ومحدودة بالمستويات المعلنة', () => {
+  const none = legacyBonus({ legacy: {} });
+  assert.equal(none.coinMult, 1);
+  assert.equal(none.manualMult, 1);
+  assert.equal(none.offlineHours, 0);
+  const maxed = legacyBonus({ legacy: { vein_memory: 4, digger_hand: 4, lineage_vault: 2 } });
+  assert.ok(Math.abs(maxed.coinMult - 1.2) < 1e-9);
+  assert.ok(Math.abs(maxed.manualMult - 1.2) < 1e-9);
+  assert.equal(maxed.offlineHours, 2);
+  // القيم الزائدة تُقصّ عند الحد
+  assert.deepEqual(legacyRanks({ legacy: { vein_memory: 99, digger_hand: 99, lineage_vault: 99 } }), { vein_memory: 4, digger_hand: 4, lineage_vault: 2 });
+});
+
+test('أهداف الدورة تعتمد تقدّم الدورة فقط ولا تمنح نوى أو جواهر', () => {
+  const p = {
+    runManualMined: 300000, runMined: 9000000, runRelics: 2,
+    regionsUnlocked: ['surface', 'coal', 'crystal'], equipment: { pickaxe: 12 }, workers: 5,
+  };
+  assert.equal(cycleGoalProgress(p, 'runManualMined'), 300000);
+  assert.equal(cycleGoalProgress(p, 'regionsUnlocked'), 3);
+  assert.equal(cycleGoalProgress(p, 'pickaxe'), 12);
+  assert.equal(cycleGoalProgress(p, 'runRelics'), 2);
+  assert.equal(cycleGoalProgress(p, 'unknown'), 0);
+  // كل مكافآت الأهداف عملات فقط: لا نوى إرث ولا جواهر (لا تضخّم دائم).
+  for (const g of CYCLE_GOALS) {
+    assert.ok(!g.reward.cores, `${g.id} يجب ألا يمنح نوى`);
+    assert.ok(!g.reward.gems, `${g.id} يجب ألا يمنح جواهر`);
+    assert.ok(g.reward.coins > 0, `${g.id} يحتاج مكافأة عملات`);
+  }
+});
+
+test('أوسمة البعث تصعد مع عدد الدورات وتُسقِف عند الأعلى', () => {
+  assert.equal(rebirthBadge(0).current.id, REBIRTH_BADGES[0].id);
+  assert.equal(rebirthBadge(1).current.rebirths, 1);
+  assert.equal(rebirthBadge(4).current.rebirths, 3);
+  assert.equal(rebirthBadge(4).next.rebirths, 5);
+  assert.equal(rebirthBadge(4).next.remaining, 1);
+  const maxed = rebirthBadge(99);
+  assert.equal(maxed.current.id, REBIRTH_BADGES[REBIRTH_BADGES.length - 1].id);
+  assert.equal(maxed.next, null);
+});
+
+test('الصندوق الجماعي يتطلب مساهمين متعددين كلٌّ بلغ الحد الأدنى', () => {
+  const solo = groupChestStatus({ contributed: GROUP_GOAL.target, byPlayer: { a: GROUP_GOAL.target } });
+  assert.equal(solo.eligible, true, 'مساهم واحد قادر يكفي في مجتمع صغير');
+  assert.equal(solo.required, 1);
+
+  const many = groupChestStatus({ contributed: GROUP_GOAL.target, byPlayer: { a: 100000, b: 100000, c: 50000 } });
+  assert.equal(many.required, 3);
+  assert.equal(many.capable, 3);
+  assert.equal(many.eligible, true);
+
+  const weak = groupChestStatus({ contributed: GROUP_GOAL.target, byPlayer: { a: 245000, b: 2500, c: 2500 } });
+  assert.equal(weak.capable, 1);
+  assert.equal(weak.eligible, false, 'لا يكفي الهدف الإجمالي بلا 3 مساهمين قادرين');
+
+  const partial = groupChestStatus({ contributed: 100, byPlayer: { a: 100 } });
+  assert.equal(partial.eligible, false, 'الهدف الإجمالي شرط أيضاً');
+});
+
+test('جوائز الموسم: مشاركة وتتويج للأول وأفضل 10%', () => {
+  assert.equal(seasonRewardFor(0, 100).kind, 'winner');
+  assert.equal(seasonRewardFor(0, 100).gems, SEASON_REWARDS.winnerGems);
+  assert.equal(seasonRewardFor(3, 100).kind, 'top');
+  assert.equal(seasonRewardFor(50, 100), null);
 });

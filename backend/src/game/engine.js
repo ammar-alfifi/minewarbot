@@ -5,13 +5,17 @@
 
 import {
   RARITIES, REGIONS, RELICS, EQUIPMENT, FACILITIES, WORKER, BOOST,
-  FINDS, EVENTS, eventOfWeek, weekId, dayId,
-  OFFLINE, offlineCapHours, powerOf, findChances,
+  FINDS, EVENTS, eventOfWeek, weekId, dayId, DAY_MS, HOUR_MS, WEEK_MS,
+  OFFLINE, offlineCapHours, offlineIncomeMult, powerOf, findChances,
   upgradeCost, workerCost, workerBatchCost, upgradeBatchCost,
-  regionById, regionIndex, pickRelic, collectionScore,
-  RAID, raidSuccessChance, stealAmount,
-  DAILY, VISIT_REWARDS, visitStreakAfter,
-  MILESTONES, milestoneProgress, TITLES, GROUP_GOAL, REFERRAL,
+  regionById, regionSpecialty, pickRelic, collectionScore,
+  RAID, raidSuccessChance, stealAmount, productionPerSec, raidFailureLoss, raidSeasonPoints,
+  DAILY, VISIT_REWARDS, visitStreakAfter, VISIT_REPEAT, visitDayReward,
+  MILESTONES, milestoneProgress, TITLES, GROUP_GOAL, groupChestStatus, REFERRAL,
+  SEASON_REWARDS, seasonRewardFor,
+  REBIRTH, rebirthThreshold, rebirthCores, rebirthConditions, qualifiesForRebirthSeed,
+  CYCLE_GOALS, cycleGoalProgress, REBIRTH_BADGES, rebirthBadge,
+  LEGACY_TRACKS, LEGACY_COST, legacyRanks, COSMETICS,
   unlockedRegions, nextRegion, nextMilestone, saneNumber,
 } from './rules.js';
 
@@ -36,17 +40,23 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   // تطبيع اللاعبين والترحيل من التخزين القديم
   // -------------------------------------------------------------------------
 
+  // رقم مخطط اللاعب. يُرفع عند إضافة حقول جديدة إلزامية (مثل Rebirth/الإرث/التجميل)
+  // حتى تُطبَّع الحسابات القائمة من جديد — وإلا بقيت بلا الحقول الجديدة وانهىر publicState.
+  const PLAYER_SCHEMA = 4;
+
   function playerOf(doc, id) {
     const p = doc.players[id];
     if (!p) return null;
-    if (p.__v === 2 && p.playerId === id) return p;
+    if (p.__v === PLAYER_SCHEMA && p.playerId === id) return p;
     return normalizePlayer(p, id);
   }
 
   function normalizePlayer(p, id) {
     const ts = p.updatedAt || now();
     const life = p.lifetime || {};
-    p.__v = 2;
+    // هل هذه أول مرة يُطبَّع فيها الحساب بعد إطلاق نظام البعث؟
+    const hadRebirthField = p.rebirthCount !== undefined;
+    p.__v = PLAYER_SCHEMA;
     p.playerId = id;
     p.name = String(p.name || 'منقّب').slice(0, 30);
     p.photoUrl = typeof p.photoUrl === 'string' ? p.photoUrl : null;
@@ -54,6 +64,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.createdAt = p.createdAt || ts;
     p.lastSeen = p.lastSeen || ts;
     p.lastTick = p.lastTick || p.updatedAt || ts;
+    // كسر العملة المتبقّي من دخل العمّال، حتى لا يُهدر التقريب مع كل نداء
+    p.idleCarry = Number.isFinite(Number(p.idleCarry)) ? Math.min(Math.max(Number(p.idleCarry), 0), 1) : 0;
+    // نسخة الجلسة: تزداد عند تسجيل الخروج فتُبطل كل التوكنات الصادرة قبلها
+    p.sessionEpoch = saneNumber(p.sessionEpoch, 0, 1e9);
     p.coins = saneNumber(p.coins ?? p.gold, 0, 1e15);
     p.gems = saneNumber(p.gems, 0, 1e7);
     const eq = p.equipment || {};
@@ -69,6 +83,33 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       storage: clamp(saneNumber(fac.storage, 1, 4) || 1, 1, FACILITIES.storage.maxLevel),
     };
     p.workers = saneNumber(p.workers, 0, WORKER.maxCount);
+    // عدّادات دورة البعث (Rebirth) وشجرة الإرث الدائمة
+    p.rebirthCount = saneNumber(p.rebirthCount, 0, 1e6);
+    p.runMined = saneNumber(p.runMined, 0, 1e15);
+    p.runManualMined = saneNumber(p.runManualMined, 0, 1e15);
+    // عدّاد آثار الدورة (لأهداف الدورة) — يُصفَّر مع البعث.
+    p.runRelics = saneNumber(p.runRelics, 0, 1e6);
+    p.cycleGoalsClaimed = Array.isArray(p.cycleGoalsClaimed)
+      ? p.cycleGoalsClaimed.filter((g) => CYCLE_GOALS.some((x) => x.id === g))
+      : [];
+    p.legacyCores = saneNumber(p.legacyCores, 0, 1e6);
+    p.rebirthSeeded = Boolean(p.rebirthSeeded);
+    const leg = p.legacy || {};
+    p.legacy = {
+      vein_memory: clamp(saneNumber(leg.vein_memory, 0, LEGACY_TRACKS.vein_memory.maxRank), 0, LEGACY_TRACKS.vein_memory.maxRank),
+      digger_hand: clamp(saneNumber(leg.digger_hand, 0, LEGACY_TRACKS.digger_hand.maxRank), 0, LEGACY_TRACKS.digger_hand.maxRank),
+      lineage_vault: clamp(saneNumber(leg.lineage_vault, 0, LEGACY_TRACKS.lineage_vault.maxRank), 0, LEGACY_TRACKS.lineage_vault.maxRank),
+    };
+    // وقت آخر مكافأة جواهر لليوم السابع (لجعل تكرارها أسبوعياً بحد واضح)
+    p.visitGemsAt = saneNumber(p.visitGemsAt, 0, 1e15);
+    // متجر التجميل: ملكية وتجهيز — لا يمنح أي قوة تنافسية
+    const cos = p.cosmetics && typeof p.cosmetics === 'object' ? p.cosmetics : {};
+    const ownedCosmetics = Array.isArray(cos.owned) ? cos.owned.filter((cid) => COSMETICS.some((c) => c.id === cid)) : [];
+    p.cosmetics = { owned: ownedCosmetics, equipped: {} };
+    for (const c of COSMETICS) {
+      const eq = cos.equipped && cos.equipped[c.type];
+      p.cosmetics.equipped[c.type] = ownedCosmetics.includes(eq) ? eq : null;
+    }
     p.totalMinedLegacy = saneNumber(p.totalMined, 0, 1e15);
     p.lifetime = {
       totalMined: saneNumber(life.totalMined ?? p.totalMined, 0, 1e15),
@@ -92,9 +133,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         firstAt: saneNumber(entry && entry.firstAt, ts, 1e15) || ts,
       };
     }
-    p.regionsUnlocked = Array.isArray(p.regionsUnlocked) && p.regionsUnlocked.length
-      ? p.regionsUnlocked.filter((r) => REGIONS.some((x) => x.id === r))
-      : unlockedRegions(p.lifetime.totalMined);
+    // المناطق تتتبع تقدّم الدورة (runMined)، مع احتياط lifetime للحسابات القديمة جداً.
+    // نُنقّي المعرفات المكرّرة/غير الصالحة حتى لا يخدع العدّاد شرطَ «كل المناطق».
+    const storedRegions = Array.isArray(p.regionsUnlocked)
+      ? [...new Set(p.regionsUnlocked.filter((r) => REGIONS.some((x) => x.id === r)))]
+      : [];
+    p.regionsUnlocked = storedRegions.length
+      ? storedRegions
+      : unlockedRegions(hadRebirthField ? p.runMined : p.lifetime.totalMined);
     p.title = TITLES.some((t) => t.id === p.title) ? p.title : 'novice';
     if (!p.lifetime.titles.includes(p.title)) p.lifetime.titles.push(p.title);
     p.shieldUntil = saneNumber(p.shieldUntil, 0, 1e15);
@@ -102,12 +148,19 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.friends = Array.isArray(p.friends) ? [...new Set(p.friends.filter((f) => typeof f === 'string' && f !== id))].slice(0, REFERRAL.maxFriends) : [];
     p.referredBy = typeof p.referredBy === 'string' ? p.referredBy : null;
     p.notices = Array.isArray(p.notices) ? p.notices.slice(-20) : [];
-    p.actionLog = Array.isArray(p.actionLog) ? p.actionLog.slice(-40) : [];
+    p.actionLog = Array.isArray(p.actionLog) ? p.actionLog.slice(-100) : [];
     p.dailyAt = saneNumber(p.dailyAt, 0, 1e15);
     p.visitAt = saneNumber(p.visitAt, 0, 1e15);
     p.visitStreak = clamp(saneNumber(p.visitStreak, 0, 7), 0, 7);
     p.lastGemAt = saneNumber(p.lastGemAt, 0, 1e15);
     p.lastRelicAt = saneNumber(p.lastRelicAt, 0, 1e15);
+    // ترحيل محافظ للحسابات القائمة عند الإطلاق: من حقّق شروط المناطق والترقيات
+    // يحصل على أهلية بعث أولى مكافئة (نعترف بالجهد السابق دون ادّعاء سجل يدوي وهمي).
+    if (!hadRebirthField && qualifiesForRebirthSeed(p)) {
+      p.runMined = Math.min(p.lifetime.totalMined, rebirthThreshold(0));
+      p.runManualMined = REBIRTH.manualThreshold;
+      p.rebirthSeeded = true;
+    }
     p.milestonesClaimed = Array.isArray(p.milestonesClaimed) ? p.milestonesClaimed.filter((m) => MILESTONES.some((x) => x.id === m)) : [];
     p.groupClaims = p.groupClaims && typeof p.groupClaims === 'object' ? p.groupClaims : { weekId: weekId(ts), ids: [] };
     if (!Array.isArray(p.groupClaims.ids)) p.groupClaims.ids = [];
@@ -116,7 +169,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.outgoing = Array.isArray(p.outgoing) ? p.outgoing.slice(-RAID.logLimit) : [];
     p.raid = p.raid && typeof p.raid === 'object' ? p.raid : {};
     p.raid.lastAt = saneNumber(p.raid.lastAt, 0, 1e15);
-    p.raid.winsToday = saneNumber(p.raid.winsToday, 0, 100);
+    // ترحيل: كان يُحتسب النجاح فقط (winsToday)؛ صار سقف الغارات على المحاولات.
+    p.raid.attemptsToday = saneNumber(p.raid.attemptsToday ?? p.raid.winsToday, 0, 1000);
+    if (p.raid.winsToday !== undefined) delete p.raid.winsToday;
     p.raid.day = saneNumber(p.raid.day, dayId(ts), 1e9);
     p.raid.targets = p.raid.targets && typeof p.raid.targets === 'object' ? p.raid.targets : {};
     p.inviteGems = p.inviteGems && typeof p.inviteGems === 'object' ? p.inviteGems : { day: dayId(ts), gems: 0 };
@@ -142,6 +197,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       createdAt: ts,
       lastSeen: ts,
       lastTick: ts,
+      idleCarry: 0,
+      sessionEpoch: 0,
       coins: 0,
       gems: 0,
       equipment: { pickaxe: 1, lamp: 1, helmet: 1 },
@@ -160,7 +217,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       groupChestWeek: -1,
       incoming: [],
       outgoing: [],
-      raid: { lastAt: 0, winsToday: 0, day: dayId(ts), targets: {} },
+      raid: { lastAt: 0, attemptsToday: 0, day: dayId(ts), targets: {} },
       inviteGems: { day: dayId(ts), gems: 0 },
       season: { weekId: weekId(ts), score: 0 },
       lastSeason: null,
@@ -186,9 +243,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     return meta;
   }
 
+  /**
+   * الصيانة الدورية: تدوير الموسم/هدف المجموعة/الصندوق + تنظيف الضيوف التائهين.
+   * تُرجع true إذا غيّرت شيئاً يحتاج تثبيتاً على المخزن الدائم (تُستخدم في leaderboard).
+   */
   function maintenance(doc, ts) {
     const meta = ensureMeta(doc, ts);
     const wk = weekId(ts);
+    let changed = false;
 
     // نهاية الموسم: أرشفة النتائج وحفظ الإنجاز الدائم
     if (meta.season.weekId !== wk) {
@@ -205,6 +267,15 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
           const p = playerOf(doc, id);
           if (!p) return;
           p.lastSeason = { weekId: prev.weekId, rank: idx + 1, score, total: sorted.length };
+          // جوائز نهاية الموسم: تتويج للأول/أفضل 10% + جائزة مشاركة عند العتبة.
+          const podium = seasonRewardFor(idx, sorted.length);
+          const participation = score >= SEASON_REWARDS.participationScore ? SEASON_REWARDS.participationGems : 0;
+          const gems = Math.max(podium ? podium.gems : 0, participation);
+          if (gems > 0) {
+            addGems(doc, p, gems, { ts, season: false });
+            p.lastSeason.reward = { kind: podium ? podium.kind : 'participation', gems };
+            pushNotice(p, 'season_reward', { weekId: prev.weekId, rank: idx + 1, gems, kind: p.lastSeason.reward.kind }, ts);
+          }
           if (idx === 0) {
             p.lifetime.seasonWins += 1;
             pushNotice(p, 'season_win', { weekId: prev.weekId, rank: 1, score, total: sorted.length }, ts);
@@ -215,15 +286,18 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         });
       }
       meta.season = { weekId: wk, scores: {} };
+      changed = true;
     }
 
     // هدف الجماعة الأسبوعي
     if (meta.group.weekId !== wk) {
       meta.group = { weekId: wk, contributed: 0, byPlayer: {} };
+      changed = true;
     }
 
-    // الصندوق الجماعي عند بلوغ الهدف: مرة واحدة لكل مساهم في الأسبوع
-    if (meta.group.contributed >= GROUP_GOAL.target) {
+    // الصندوق الجماعي عند بلوغ الهدف الإجمالي وتوفّر مساهمين كافيين: مرة لكل مساهم أسبوعياً
+    const chest = groupChestStatus(meta.group);
+    if (chest.eligible) {
       for (const [id, contribution] of Object.entries(meta.group.byPlayer)) {
         if (!contribution || contribution <= 0) continue;
         const p = playerOf(doc, id);
@@ -231,9 +305,38 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         p.groupChestWeek = wk;
         addGems(doc, p, GROUP_GOAL.chestGems, { ts, season: false });
         pushNotice(p, 'group_chest', { gems: GROUP_GOAL.chestGems, target: GROUP_GOAL.target, contribution }, ts);
+        changed = true;
       }
     }
-    return meta;
+
+    // تنظيف ضيوف التطوير الفارغين المنقطعين (مرة كل ساعة على الأكثر — لا يمسّ تيليجرام)
+    if (!meta.lastPrune || ts - meta.lastPrune >= HOUR_MS) {
+      meta.lastPrune = ts;
+      if (pruneStaleGuests(doc, ts)) changed = true;
+    }
+
+    return changed;
+  }
+
+  /** يحذف حسابات الضيوف بلا أي تقدّم ومنقطعة منذ 30 يوماً (بقايا فتحات المتصفح). */
+  function pruneStaleGuests(doc, ts) {
+    const CUTOFF = 30 * DAY_MS;
+    let pruned = false;
+    for (const [id, raw] of Object.entries(doc.players)) {
+      if (!raw || raw.mode !== 'guest') continue;
+      const lastSeen = Number(raw.lastSeen) || Number(raw.createdAt) || 0;
+      if (ts - lastSeen < CUTOFF) continue;
+      const coins = Number(raw.coins) || 0;
+      const gems = Number(raw.gems) || 0;
+      const workers = Number(raw.workers) || 0;
+      const totalMined = (raw.lifetime && Number(raw.lifetime.totalMined)) || Number(raw.totalMined) || 0;
+      const relics = raw.relics && typeof raw.relics === 'object' ? Object.keys(raw.relics).length : 0;
+      const friends = Array.isArray(raw.friends) ? raw.friends.length : 0;
+      if (coins > 0 || gems > 0 || workers > 0 || totalMined > 0 || relics > 0 || friends > 0) continue;
+      delete doc.players[id];
+      pruned = true;
+    }
+    return pruned;
   }
 
   // -------------------------------------------------------------------------
@@ -252,16 +355,21 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     meta.season.scores[p.playerId] = p.season.score;
   }
 
-  function addCoins(doc, p, amount, ts, { mined = true } = {}) {
+  function addCoins(doc, p, amount, ts, { mined = true, manual = false, season = true, group = true } = {}) {
     const value = Math.floor(amount);
     if (value <= 0) return 0;
     p.coins = Math.min(1e15, p.coins + value);
     if (mined) {
       p.lifetime.totalMined += value;
-      addSeason(doc, p, value, ts);
-      const meta = ensureMeta(doc, ts);
-      meta.group.contributed += value;
-      meta.group.byPlayer[p.playerId] = (meta.group.byPlayer[p.playerId] || 0) + value;
+      // عدّاد الدورة: يفتح المناطق ويؤهّل للبعث. التعدين اليدوي يُحتسب منفصلاً.
+      p.runMined = Math.min(1e15, (p.runMined || 0) + value);
+      if (manual) p.runManualMined = Math.min(1e15, (p.runManualMined || 0) + value);
+      if (season) addSeason(doc, p, value, ts);
+      if (group) {
+        const meta = ensureMeta(doc, ts);
+        meta.group.contributed += value;
+        meta.group.byPlayer[p.playerId] = (meta.group.byPlayer[p.playerId] || 0) + value;
+      }
     }
     return value;
   }
@@ -280,6 +388,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     if (!def) return null;
     const existing = p.relics[relicId];
     p.lastRelicAt = ts;
+    p.runRelics = Math.min(1e6, (p.runRelics || 0) + 1);
     if (existing) {
       existing.count += 1;
       const dupeGems = RARITIES[def.rarity].dupeGems;
@@ -295,14 +404,23 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   function applyIdle(doc, p, ts) {
-    const elapsed = Math.max(0, (ts - (p.lastTick || ts)) / 1000);
-    p.lastTick = ts;
+    const anchor = p.lastTick || ts;
+    const elapsed = Math.max(0, (ts - anchor) / 1000);
+    // لا نُقدّم وقت آخر احتساب قبل مرور ثانية كاملة: سابقاً كان أي نداء أقصر من
+    // ثانية (نقر سريع) يُصفّر دخل العمّال تماماً لأن lastTick كان يتقدّم دائماً.
     if (elapsed < 1) return null;
+    p.lastTick = ts;
+
     const capHours = offlineCapHours(p);
     const effective = Math.min(elapsed, capHours * 3600);
-    const rate = powerOf(p, ts).idlePerSec;
-    const coins = Math.floor(rate * effective);
-    if (coins > 0) addCoins(doc, p, coins, ts, { mined: true });
+    const rate = powerOf(p, ts).idlePerSec * offlineIncomeMult(p);
+    // نُرحّل كسر العملة المتبقّي بدل إهداره في التقريب عند كل نداء.
+    const exact = rate * effective + (p.idleCarry || 0);
+    const coins = Math.floor(exact);
+    p.idleCarry = Math.min(Math.max(exact - coins, 0), 1);
+    // يمنح دخل العمّال عملات ويرفع مجموع التعدين (فتُفتح المناطق)، لكنه لا يضخّم
+    // هدف الجماعة الأسبوعي ولا نقاط الموسم حتى لا يحصد اللاعب الخامل السباق.
+    if (coins > 0) addCoins(doc, p, coins, ts, { mined: true, season: false, group: false });
     return {
       coins,
       seconds: Math.floor(effective),
@@ -315,12 +433,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   function grantVisitIfDue(doc, p, ts) {
     if (p.visitAt && ts - p.visitAt < DAILY.cooldownMs) return null;
     p.visitStreak = visitStreakAfter(p.visitAt, p.visitStreak, ts);
-    const reward = VISIT_REWARDS[p.visitStreak - 1];
+    // اليوم السابع يدخل في دورة أسبوعية: جواهره مرة كل 7 أيام، وباقي الزيارات عملات.
+    const { reward, repeat } = visitDayReward(p.visitStreak, p.visitGemsAt, ts);
     if (!reward) return null;
     p.visitAt = ts;
     p.lifetime.daysVisited += 1;
     p.lifetime.bestStreak = Math.max(p.lifetime.bestStreak, p.visitStreak);
-    const granted = { day: p.visitStreak, coins: 0, gems: 0 };
+    if (reward.gems && !repeat) p.visitGemsAt = ts;
+    const granted = { day: p.visitStreak, coins: 0, gems: 0, repeat: Boolean(repeat) };
     if (reward.coins) granted.coins = addCoins(doc, p, reward.coins, ts, { mined: false });
     if (reward.gems) granted.gems = addGems(doc, p, reward.gems, { ts, season: false });
     pushNotice(p, 'visit', granted, ts);
@@ -328,7 +448,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   function unlockRegions(doc, p, ts) {
-    const unlocked = unlockedRegions(p.lifetime.totalMined);
+    // فتح المناطق يتبع تقدّم الدورة (runMined) لا المجموع مدى الحياة.
+    const unlocked = unlockedRegions(p.runMined);
     const fresh = unlocked.filter((id) => !p.regionsUnlocked.includes(id));
     if (!fresh.length) return [];
     p.regionsUnlocked = unlocked;
@@ -351,16 +472,17 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   // تكرار الطلبات (Idempotency) — نفس requestId لا يُنفَّذ مرتين
   // -------------------------------------------------------------------------
 
-  function replay(p, requestId, ts) {
+  function replay(p, requestId, type, ts) {
     if (!requestId || !REQUEST_ID_RE.test(requestId)) return null;
-    const entry = (p.actionLog || []).find((e) => e.id === requestId && ts - e.at < 60 * 60 * 1000);
+    // المطابقة تشمل نوع العملية: إعادة استخدام نفس المعرّف لعملية أخرى لا تُقبل.
+    const entry = (p.actionLog || []).find((e) => e.id === requestId && e.type === type && ts - e.at < 60 * 60 * 1000);
     return entry ? entry.result : null;
   }
 
   function remember(p, requestId, type, result, ts) {
     if (!requestId || !REQUEST_ID_RE.test(requestId)) return;
     p.actionLog.push({ id: requestId, type, result, at: ts });
-    p.actionLog = p.actionLog.filter((e) => ts - e.at < 60 * 60 * 1000).slice(-40);
+    p.actionLog = p.actionLog.filter((e) => ts - e.at < 60 * 60 * 1000).slice(-100);
   }
 
   // -------------------------------------------------------------------------
@@ -377,6 +499,20 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         claimable: !done.has(m.id) && progress >= m.threshold,
         claimed: done.has(m.id),
         reward: m.reward,
+      };
+    });
+  }
+
+  function cycleGoalState(p) {
+    const done = new Set(p.cycleGoalsClaimed || []);
+    return CYCLE_GOALS.map((g) => {
+      const progress = cycleGoalProgress(p, g.type);
+      return {
+        id: g.id, name: g.name, emoji: g.emoji, type: g.type, threshold: g.threshold,
+        progress: Math.min(progress, g.threshold),
+        claimable: !done.has(g.id) && progress >= g.threshold,
+        claimed: done.has(g.id),
+        reward: g.reward,
       };
     });
   }
@@ -413,8 +549,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     const power = powerOf(p, ts);
     const chances = findChances(p, ts);
     const capHours = offlineCapHours(p);
-    const today = dayId(ts);
-    const winsToday = p.raid.day === dayId(ts) ? p.raid.winsToday : 0;
+    const attemptsToday = p.raid.day === dayId(ts) ? p.raid.attemptsToday : 0;
+    const protectedNew = p.lifetime.totalMined < RAID.newPlayerProtectionMined;
     const doneClaims = new Set((p.groupClaims.weekId === weekId(ts) ? p.groupClaims.ids : []));
     const group = ensureMeta(doc, ts).group;
     const myContribution = group.byPlayer[p.playerId] || 0;
@@ -434,6 +570,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       region: {
         id: power.region.id, name: power.region.name, emoji: power.region.emoji,
         tagline: power.region.tagline, mult: power.region.coinMult, theme: power.region.theme,
+        specialty: regionSpecialty(power.region.id),
       },
       regionsUnlocked: [...p.regionsUnlocked],
       relics: Object.entries(p.relics).map(([id, e]) => ({ id, count: e.count, firstAt: e.firstAt })),
@@ -471,10 +608,15 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       raid: {
         cooldownUntil: p.raid.lastAt + RAID.cooldownMs,
         cooldownMs: RAID.cooldownMs,
-        winsToday,
-        dailyCap: RAID.dailySuccessCap,
+        attemptsToday,
+        dailyCap: RAID.dailyAttempts,
         shieldUntil: p.shieldUntil,
-        stealPct: RAID.stealPct,
+        shieldCapMs: RAID.shieldCapMs,
+        sharePct: RAID.sharePct,
+        vaultPct: RAID.vaultPct,
+        lossOnFail: protectedNew ? 0 : raidFailureLoss(p, ts),
+        protected: protectedNew,
+        protectionMined: RAID.newPlayerProtectionMined,
         perTargetCooldownMs: RAID.perTargetCooldownMs,
         revengeWindowMs: RAID.revengeWindowMs,
       },
@@ -486,6 +628,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         contributed: group.contributed,
         myContribution,
         chestReached: group.contributed >= GROUP_GOAL.target,
+        chest: groupChestStatus(group),
         chestClaimed: p.groupChestWeek === weekId(ts),
         chestGems: GROUP_GOAL.chestGems,
         tiers: GROUP_GOAL.tiers.map((t) => ({
@@ -495,8 +638,67 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         })),
       },
       milestones: milestoneStatus(p),
-      season: { weekId: weekId(ts), score: p.season.score, endsAt: (p.season.weekId + 1) * 7 * 24 * 3600 * 1000 },
+      season: {
+        weekId: weekId(ts), score: p.season.score,
+        endsAt: (p.season.weekId + 1) * 7 * 24 * 3600 * 1000,
+        rewards: SEASON_REWARDS,
+      },
       lastSeason: p.lastSeason,
+      rebirth: (() => {
+        const st = rebirthConditions(p);
+        const badge = rebirthBadge(p.rebirthCount);
+        const goals = cycleGoalState(p);
+        return {
+          name: REBIRTH.name, emoji: REBIRTH.emoji,
+          count: p.rebirthCount,
+          threshold: st.threshold,
+          runMined: p.runMined,
+          runManualMined: p.runManualMined,
+          runRelics: p.runRelics,
+          manualThreshold: REBIRTH.manualThreshold,
+          minPickaxe: REBIRTH.minPickaxe,
+          minWorkers: REBIRTH.minWorkers,
+          totalRegions: REGIONS.length,
+          nextThreshold: rebirthThreshold((p.rebirthCount || 0) + 1),
+          conditions: st.conditions,
+          eligible: st.eligible,
+          cores: st.cores,
+          maxCores: REBIRTH.maxCores,
+          seeded: p.rebirthSeeded,
+          badge: badge.current,
+          nextBadge: badge.next,
+          cycleGoals: {
+            total: goals.length,
+            claimed: goals.filter((g) => g.claimed).length,
+            allClaimed: goals.every((g) => g.claimed),
+            goals,
+          },
+          keepNote: REBIRTH.keepNote,
+          resetNote: REBIRTH.resetNote,
+        };
+      })(),
+      legacy: (() => {
+        const ranks = legacyRanks(p);
+        return {
+          cores: p.legacyCores,
+          spent: Object.values(ranks).reduce((s, n) => s + n, 0),
+          cost: LEGACY_COST,
+          tracks: Object.values(LEGACY_TRACKS).map((t) => ({
+            id: t.id, name: t.name, emoji: t.emoji, desc: t.desc, maxRank: t.maxRank,
+            rank: ranks[t.id], maxed: ranks[t.id] >= t.maxRank,
+            canBuy: p.legacyCores >= LEGACY_COST && ranks[t.id] < t.maxRank,
+          })),
+        };
+      })(),
+      cosmetics: {
+        // حماية صريحة: حساب قادم بمخطط قديم لا يُسقط الرد (بدل 500 غير مفهوم).
+        owned: [...(p.cosmetics?.owned || [])],
+        equipped: { ...(p.cosmetics?.equipped || {}) },
+        shop: COSMETICS.map((c) => ({
+          id: c.id, type: c.type, name: c.name, emoji: c.emoji, cost: c.cost, desc: c.desc,
+          owned: p.cosmetics.owned.includes(c.id),
+        })),
+      },
       tutorialDone: p.tutorialDone,
       stats: {
         totalMined: p.lifetime.totalMined,
@@ -509,15 +711,17 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         seasonWins: p.lifetime.seasonWins,
         bestStreak: p.lifetime.bestStreak,
         daysVisited: p.lifetime.daysVisited,
+        rebirths: p.rebirthCount,
+        legacyCores: p.legacyCores,
         wealthScore: Math.floor(p.coins + p.gems * 250),
         collectionScore: collectionScore(p),
         friends: p.friends.length,
       },
       goals: (() => {
-        const nr = nextRegion(p.lifetime.totalMined);
+        const nr = nextRegion(p.runMined);
         const nm = nextMilestone(p);
         return {
-          nextRegion: nr ? { id: nr.id, name: nr.name, emoji: nr.emoji, unlockTotalMined: nr.unlockTotalMined, remaining: Math.max(0, nr.unlockTotalMined - p.lifetime.totalMined) } : null,
+          nextRegion: nr ? { id: nr.id, name: nr.name, emoji: nr.emoji, unlockTotalMined: nr.unlockTotalMined, remaining: Math.max(0, nr.unlockTotalMined - p.runMined) } : null,
           nextMilestone: nm ? { id: nm.id, name: nm.name, emoji: nm.emoji, remaining: Math.max(0, nm.threshold - milestoneProgress(p, nm.type)) } : null,
         };
       })(),
@@ -531,7 +735,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       regions: REGIONS.map((r) => ({
         id: r.id, name: r.name, emoji: r.emoji, tagline: r.tagline,
         unlockTotalMined: r.unlockTotalMined, mult: r.coinMult, theme: r.theme,
-        relics: r.relics,
+        relics: r.relics, specialty: regionSpecialty(r.id),
       })),
       relics: Object.values(RELICS).map((r) => ({
         id: r.id, name: r.name, emoji: r.emoji, rarity: r.rarity, region: r.region, flavor: r.flavor,
@@ -548,9 +752,22 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       titles: TITLES,
       milestones: MILESTONES.map((m) => ({ id: m.id, name: m.name, emoji: m.emoji, type: m.type, threshold: m.threshold, reward: m.reward })),
       groupGoal: GROUP_GOAL,
+      cosmetics: COSMETICS,
+      rebirthRules: {
+        name: REBIRTH.name, emoji: REBIRTH.emoji,
+        baseThreshold: REBIRTH.baseThreshold, manualThreshold: REBIRTH.manualThreshold,
+        thresholdMult: REBIRTH.thresholdMult, minPickaxe: REBIRTH.minPickaxe,
+        minWorkers: REBIRTH.minWorkers, maxCores: REBIRTH.maxCores,
+        keepNote: REBIRTH.keepNote, resetNote: REBIRTH.resetNote,
+      },
+      legacyTracks: Object.values(LEGACY_TRACKS),
+      seasonRewards: SEASON_REWARDS,
+      visitRepeat: VISIT_REPEAT,
       raidRules: {
-        cooldownMs: RAID.cooldownMs, dailySuccessCap: RAID.dailySuccessCap, stealPct: RAID.stealPct,
-        minSuccess: RAID.minSuccess, maxSuccess: RAID.maxSuccess, shieldOnRaidMs: RAID.shieldOnRaidMs,
+        cooldownMs: RAID.cooldownMs, dailyAttempts: RAID.dailyAttempts, sharePct: RAID.sharePct,
+        vaultPct: RAID.vaultPct, minSuccess: RAID.minSuccess, maxSuccess: RAID.maxSuccess,
+        shieldOnRaidMs: RAID.shieldOnRaidMs, shieldCapMs: RAID.shieldCapMs,
+        failureLossPct: RAID.failureLossPct, newPlayerProtectionMined: RAID.newPlayerProtectionMined,
         revengeWindowMs: RAID.revengeWindowMs, minDefenderBalance: RAID.minDefenderBalance,
       },
       offline: { ...OFFLINE, baseCapHours: OFFLINE.baseCapHours },
@@ -579,21 +796,29 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         p.mode = identity.mode;
       }
 
-      // إحالة صديق: تربط الصداقة وتمنح مكافأة متبادلة (بسقف يومي)
-      if (isNew && startParam) {
+      // إحالة صديق: تربط الصداقة وتمنح مكافأة متبادلة (بسقف يومي).
+      // نربط الصداقة حتى للحسابات القائمة وليس للجديد فقط: كثير من اللاعبين يفتحون
+      // اللعبة أولاً ثم يدخلون من رابط الدعوة، وكان الربط يُشترط به isNew فيفشل دائماً.
+      // الربط والمكافأة يتمّان مرة واحدة لكل زوج (referredBy)، وبدون إحالة ذاتية.
+      if (startParam) {
         const referrerId = parseReferral(startParam);
         const referrer = referrerId && referrerId !== p.playerId ? playerOf(doc, referrerId) : null;
-        if (referrer) {
+        const alreadyLinked = referrer ? p.friends.includes(referrer.playerId) : false;
+        const freeToLink = !p.referredBy || p.referredBy === referrer?.playerId;
+        if (referrer && !alreadyLinked && freeToLink) {
           linkFriends(referrer, p);
-          if (referrer.inviteGems.day !== dayId(ts)) referrer.inviteGems = { day: dayId(ts), gems: 0 };
-          const reward = Math.min(REFERRAL.inviterGems, REFERRAL.dailyCapGems - referrer.inviteGems.gems);
-          if (reward > 0) {
-            referrer.inviteGems.gems += reward;
-            addGems(doc, referrer, reward, { ts, season: false });
-            pushNotice(referrer, 'invite_reward', { gems: reward, name: p.name }, ts);
+          // المكافآت مرة واحدة فقط عند أول ربط حقيقي (لا تتكرر بإعادة فتح الرابط).
+          if (!p.referredBy) {
+            if (referrer.inviteGems.day !== dayId(ts)) referrer.inviteGems = { day: dayId(ts), gems: 0 };
+            const reward = Math.min(REFERRAL.inviterGems, REFERRAL.dailyCapGems - referrer.inviteGems.gems);
+            if (reward > 0) {
+              referrer.inviteGems.gems += reward;
+              addGems(doc, referrer, reward, { ts, season: false });
+              pushNotice(referrer, 'invite_reward', { gems: reward, name: p.name }, ts);
+            }
+            p.referredBy = referrer.playerId;
+            addGems(doc, p, REFERRAL.inviteeGems, { ts, season: false });
           }
-          p.referredBy = referrer.playerId;
-          addGems(doc, p, REFERRAL.inviteeGems, { ts, season: false });
         }
       }
 
@@ -604,7 +829,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       }
 
       const upkeep = touch(doc, p, ts);
-      return { player: publicState(doc, p, ts), isNew, mode: identity.mode, idle: upkeep.idle, visitReward: upkeep.visitReward, catalog: catalog() };
+      return { player: publicState(doc, p, ts), isNew, mode: identity.mode, idle: upkeep.idle, visitReward: upkeep.visitReward, catalog: catalog(), sessionEpoch: p.sessionEpoch };
     });
   }
 
@@ -643,13 +868,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'mine', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       const power = powerOf(p, ts);
       const chances = findChances(p, ts);
       const coins = Math.floor(power.manual * count);
-      addCoins(doc, p, coins, ts, { mined: true });
+      // التعدين النقر/اليدوي النشط: يُحتسب في عدّاد الدورة اليدوي (شرط البعث).
+      addCoins(doc, p, coins, ts, { mined: true, manual: true });
 
       let gemResult = null;
       let relicResult = null;
@@ -685,7 +911,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, `upgrade:${item}`, ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       let result;
@@ -736,13 +962,21 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!attacker) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, attacker, ts);
 
-      const cached = replay(attacker, requestId, ts);
+      const cached = replay(attacker, requestId, 'raid', ts);
       if (cached) return { result: cached, player: publicState(doc, attacker, ts), replayed: true };
 
       if (!targetId || typeof targetId !== 'string' || targetId === playerId) fail('هدف غير صالح', 400, 'bad_target');
       const target = playerOf(doc, targetId);
       if (!target) fail('اللاعب غير موجود', 404, 'target_not_found');
       touch(doc, target, ts);
+
+      // حماية المبتدئين: من لم يتعدَّ عتبة التعدين لا يهاجم ولا يُهاجَم (عدا الثأر)
+      if (!revenge && attacker.lifetime.totalMined < RAID.newPlayerProtectionMined) {
+        fail('تحتاج مزيداً من التعدين قبل بدء الغارات', 403, 'attacker_protected');
+      }
+      if (!revenge && target.lifetime.totalMined < RAID.newPlayerProtectionMined) {
+        fail('هذا اللاعب جديد وما زال محمياً 🛡️', 403, 'target_protected');
+      }
 
       // إعادة الغارة مسموحة ضمن نافذة زمنية حتى لو كان المهاجم محمياً،
       // لأنها حق طبيعي للهدف الذي سُرق منه (سجل المهاجم contains الضربة التي تلقاها).
@@ -763,10 +997,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       }
       if (attacker.raid.day !== todayKey(ts)) {
         attacker.raid.day = todayKey(ts);
-        attacker.raid.winsToday = 0;
+        attacker.raid.attemptsToday = 0;
       }
-      if (attacker.raid.winsToday >= RAID.dailySuccessCap) {
-        fail(`بلغت حد ${RAID.dailySuccessCap} غارات ناجحة اليوم — عد غداً`, 429, 'daily_cap');
+      if (attacker.raid.attemptsToday >= RAID.dailyAttempts) {
+        fail(`بلغت حد ${RAID.dailyAttempts} محاولات اليوم — عد غداً`, 429, 'daily_cap');
       }
       const targetAt = attacker.raid.targets[targetId] || 0;
       if (!isRevenge && ts - targetAt < RAID.perTargetCooldownMs) {
@@ -793,40 +1027,60 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       };
 
       attacker.raid.lastAt = ts;
+      attacker.raid.attemptsToday += 1;
       attacker.raid.targets[targetId] = ts;
       // تنظيف سجل الأهداف القديم
       const targetEntries = Object.entries(attacker.raid.targets).filter(([, at]) => ts - at < 24 * 60 * 60 * 1000).slice(-60);
       attacker.raid.targets = Object.fromEntries(targetEntries);
+      // الهجوم يكسر درعك: لا تحتمي وتغزو في الوقت نفسه
+      attacker.shieldUntil = 0;
 
       let stolen = 0;
+      let lost = 0;
+      let defenseReward = 0;
+      let won = false;
       let message;
       if (success) {
         stolen = stealAmount(attacker, target, isRevenge, ts);
-        if (stolen < RAID.minSteal) {
-          message = 'الغارة نجحت لكن الخصم لا يملك ما يستحق النقل 🤷';
-          entryBase.success = false;
-          attacker.lifetime.raidsLost += 1;
-        } else {
+        if (stolen >= RAID.minSteal) {
+          won = true;
           target.coins -= stolen;
           addCoins(doc, attacker, stolen, ts, { mined: false });
           attacker.lifetime.raidsWon += 1;
-          attacker.raid.winsToday += 1;
           target.lifetime.raidsDefended += 1;
-          addSeason(doc, attacker, 200, ts);
+          addSeason(doc, attacker, raidSeasonPoints(stolen, attacker, ts), ts);
           const shieldMs = RAID.shieldOnRaidMs + (EQUIPMENT.helmet.effect(target.equipment.helmet).shieldBonusMs || 0);
-          target.shieldUntil = Math.min(ts + 8 * 60 * 60 * 1000, Math.max(target.shieldUntil, ts) + shieldMs);
+          target.shieldUntil = Math.min(ts + RAID.shieldCapMs, Math.max(target.shieldUntil, ts) + shieldMs);
           message = isRevenge
             ? `ثأر ناجح! استعدت ${stolen} عملة ⚔️`
             : `غنيمة! أخذت ${stolen} عملة من ${target.name} 🏆`;
-          entryBase.amount = stolen;
-          entryBase.revengeUntil = ts + RAID.revengeWindowMs;
+        } else {
+          message = 'الغارة نجحت لكن الخصم لا يملك ما يستحق النقل 🤷';
         }
-      } else {
-        attacker.lifetime.raidsLost += 1;
-        message = 'فشلت الغارة — الخصم كان مستعداً 🛡️';
       }
+      if (!won) {
+        attacker.lifetime.raidsLost += 1;
+        if (!isRevenge && !success) {
+          // مخاطرة حقيقية: خسارة من مخزون المهاجم، 60% منها تعويض للضحية والباقي يُحرق
+          lost = raidFailureLoss(attacker, ts);
+          if (lost > 0) {
+            attacker.coins -= lost;
+            defenseReward = Math.floor(lost * RAID.defenseRewardShare);
+            if (defenseReward > 0) addCoins(doc, target, defenseReward, ts, { mined: false });
+            message = `فشلت الغارة — خسرت ${lost} عملة وتعويض دفاع ${defenseReward} 🛡️`;
+          } else {
+            message = 'فشلت الغارة — الخصم كان مستعداً 🛡️';
+          }
+        } else if (isRevenge) {
+          message = 'فشل الثأر — بلا خسارة هذه المرة 🛡️';
+        }
+      }
+      entryBase.success = won;
+      entryBase.amount = stolen;
+      entryBase.loss = lost;
+      entryBase.defenseReward = defenseReward;
 
-      const attackerEntry = { at: ts, opponentId: target.playerId, opponentName: target.name, opponentEmoji: regionById(target.regionId).emoji, success: entryBase.success, amount: stolen, revenge: isRevenge };
+      const attackerEntry = { at: ts, opponentId: target.playerId, opponentName: target.name, opponentEmoji: regionById(target.regionId).emoji, success: won, amount: stolen, lost, revenge: isRevenge };
       attacker.outgoing = [...attacker.outgoing, attackerEntry].slice(-RAID.logLimit);
       target.incoming = [...target.incoming, entryBase].slice(-RAID.logLimit);
       if (isRevenge) {
@@ -836,7 +1090,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         }
       }
       // الهدف يعرف أنه سُرق (في سجل الغارات) بدون إشعارات إجبارية
-      const result = { success: entryBase.success, stolen, message, chance: Math.round(chance * 100), shieldUntil: target.shieldUntil };
+      const result = { success: won, stolen, lost, defenseReward, message, chance: Math.round(chance * 100), shieldUntil: target.shieldUntil, attemptsToday: attacker.raid.attemptsToday, dailyCap: RAID.dailyAttempts };
       remember(attacker, requestId, 'raid', result, ts);
       return { result, player: publicState(doc, attacker, ts), target: { playerId: target.playerId, name: target.name, shieldUntil: target.shieldUntil } };
     });
@@ -853,7 +1107,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'daily', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       if (ts - p.dailyAt < DAILY.cooldownMs) {
@@ -906,7 +1160,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
 
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, `claim:${kind}:${id}`, ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
 
       let result;
@@ -944,6 +1198,36 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   // -------------------------------------------------------------------------
+  // أهداف الدورة: تُطالَب مرة واحدة لكل دورة وتُصفَّر مع البعث
+  // -------------------------------------------------------------------------
+
+  async function claimCycleGoal(playerId, goalId, requestId = null) {
+    const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      touch(doc, p, ts);
+
+      const cached = replay(p, requestId, `cycle:${goalId}`, ts);
+      if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
+
+      const def = CYCLE_GOALS.find((g) => g.id === goalId);
+      if (!def) fail('هدف دورة غير معروف', 400, 'unknown_cycle_goal');
+      if ((p.cycleGoalsClaimed || []).includes(def.id)) fail('استلمت هذا الهدف في هذه الدورة', 400, 'already_claimed');
+      if (cycleGoalProgress(p, def.type) < def.threshold) fail('لم تصل لهذا الهدف بعد', 400, 'not_ready');
+
+      p.cycleGoalsClaimed.push(def.id);
+      const result = { goalId: def.id, reward: {} };
+      // مكافأة عملات فقط بلا احتساب تعدين/موسم/جماعة حتى لا تُسرّع شروط البعث.
+      if (def.reward.coins) result.reward.coins = addCoins(doc, p, def.reward.coins, ts, { mined: false });
+      if (def.reward.gems) result.reward.gems = addGems(doc, p, def.reward.gems, { ts, season: false });
+
+      remember(p, requestId, `cycle:${def.id}`, result, ts);
+      return { result, player: publicState(doc, p, ts) };
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // المنطقة والألقاب
   // -------------------------------------------------------------------------
 
@@ -953,7 +1237,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'region', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
       if (!p.regionsUnlocked.includes(regionId)) fail('المنطقة غير مفتوحة بعد', 403, 'region_locked');
       p.regionId = regionId;
@@ -969,7 +1253,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
       touch(doc, p, ts);
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'title', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
       const def = TITLES.find((t) => t.id === titleId);
       if (!def) fail('لقب غير معروف', 400, 'unknown_title');
@@ -986,6 +1270,101 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       p.title = titleId;
       const result = { titleId, bought, cost: bought ? def.cost : 0 };
       remember(p, requestId, 'title', result, ts);
+      return { result, player: publicState(doc, p, ts) };
+    });
+  }
+
+  // -------------------------------------------------------------------------
+  // بعث المنجم (Rebirth) وشجرة نوى الإرث ومتجر التجميل
+  // -------------------------------------------------------------------------
+
+  async function rebirth(playerId, requestId = null) {
+    const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      touch(doc, p, ts);
+
+      const cached = replay(p, requestId, 'rebirth', ts);
+      if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
+
+      const st = rebirthConditions(p);
+      if (!st.eligible) fail('لم تتحقق شروط البعث بعد', 400, 'rebirth_not_ready');
+
+      const cores = st.cores;
+      const fromCount = p.rebirthCount;
+      const before = { totalMined: p.lifetime.totalMined, relics: Object.keys(p.relics).length, gems: p.gems };
+
+      // يُصفَّر تطور المنجم الجاري فقط؛ كل السجل والعلاقات والمجموعة تبقى.
+      p.coins = 0;
+      p.workers = 0;
+      p.idleCarry = 0;
+      p.equipment = { pickaxe: 1, lamp: 1, helmet: 1 };
+      p.facilities = { cart: 1, smelter: 1, storage: 1 };
+      p.regionId = REGIONS[0].id;
+      p.regionsUnlocked = [REGIONS[0].id];
+      p.runMined = 0;
+      p.runManualMined = 0;
+      p.runRelics = 0;
+      p.cycleGoalsClaimed = [];
+      p.rebirthCount = saneNumber(p.rebirthCount, 0, 1e6) + 1;
+      p.legacyCores = saneNumber(p.legacyCores, 0, 1e6) + cores;
+      p.lastTick = ts;
+
+      const result = {
+        rebirths: p.rebirthCount, cores, legacyCores: p.legacyCores,
+        threshold: rebirthThreshold(p.rebirthCount), kept: before,
+      };
+      pushNotice(p, 'rebirth', result, ts);
+      remember(p, requestId, 'rebirth', result, ts);
+      return { result, player: publicState(doc, p, ts) };
+    });
+  }
+
+  async function legacyUpgrade(playerId, trackId, requestId = null) {
+    const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      touch(doc, p, ts);
+      const cached = replay(p, requestId, `legacy:${trackId}`, ts);
+      if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
+
+      const def = LEGACY_TRACKS[trackId];
+      if (!def) fail('مسار إرث غير معروف', 400, 'unknown_legacy_track');
+      const rank = p.legacy[trackId] || 0;
+      if (rank >= def.maxRank) fail('هذا المسار وصل للحد الأقصى', 400, 'max_level');
+      if (p.legacyCores < LEGACY_COST) fail('لا تملك نوى إرث كافية', 400, 'insufficient_cores');
+      p.legacyCores -= LEGACY_COST;
+      p.legacy[trackId] = rank + 1;
+      const result = { trackId, rank: p.legacy[trackId], cost: LEGACY_COST, legacyCores: p.legacyCores };
+      remember(p, requestId, `legacy:${trackId}`, result, ts);
+      return { result, player: publicState(doc, p, ts) };
+    });
+  }
+
+  async function buyCosmetic(playerId, cosmeticId, requestId = null) {
+    const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      touch(doc, p, ts);
+      const cached = replay(p, requestId, `cosmetic:${cosmeticId}`, ts);
+      if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
+
+      const def = COSMETICS.find((c) => c.id === cosmeticId);
+      if (!def) fail('زينة غير معروفة', 400, 'unknown_cosmetic');
+      let bought = false;
+      if (!p.cosmetics.owned.includes(def.id)) {
+        if (p.gems < def.cost) fail(`تحتاج ${def.cost} جوهرة لهذه الزينة`, 400, 'insufficient_gems');
+        p.gems -= def.cost;
+        p.cosmetics.owned.push(def.id);
+        bought = true;
+      }
+      // التجهيز الاختياري: نفس النوع يُستبدل
+      p.cosmetics.equipped[def.type] = def.id;
+      const result = { cosmeticId: def.id, type: def.type, bought, cost: bought ? def.cost : 0 };
+      remember(p, requestId, `cosmetic:${cosmeticId}`, result, ts);
       return { result, player: publicState(doc, p, ts) };
     });
   }
@@ -1010,26 +1389,55 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       manualPower: Math.floor(powerOf(p, ts).manual),
       isMe: p.playerId === viewerId,
       isFriend: viewerFriends.has(p.playerId),
-      lastSeen: p.lastSeen,
-      canRaid: p.playerId !== viewerId,
+      protected: p.lifetime.totalMined < RAID.newPlayerProtectionMined,
+      canRaid: p.playerId !== viewerId
+        && p.lifetime.totalMined >= RAID.newPlayerProtectionMined
+        && (!viewer || viewer.lifetime.totalMined >= RAID.newPlayerProtectionMined),
     };
-    // تقديرات الغارة تُحسب على السيرفر — الواجهة لا تعرف المعادلات
+    // تقديرات الغارة تُحسب على السيرفر — الواجهة لا تعرف المعادلات.
+    // الغنيمة متاحة للجميع بلا صداقة، وتُقارب لأقرب 5 حتى لا تكشف رصيد الخصم بدقة.
     if (viewer && p.playerId !== viewerId) {
       entry.raidEstimate = Math.round(raidSuccessChance(viewer, p, false, ts) * 100);
-      entry.potentialLoot = stealAmount(viewer, p, false, ts);
+      const loot = stealAmount(viewer, p, false, ts);
+      entry.potentialLoot = Math.round(loot / 5) * 5;
+      entry.potentialLootSeconds = Math.round(loot / Math.max(1, productionPerSec(viewer, ts)));
     }
     return entry;
   }
 
   async function leaderboard(scope = 'wealth', viewerId = null, limit = 50) {
     const ts = now();
-    return store.mutate((doc) => {
-      maintenance(doc, ts);
+    let changed = false;
+    const result = await store.mutate((doc) => {
+      changed = maintenance(doc, ts);
       const viewer = playerOf(doc, viewerId);
       const viewerFriends = new Set(viewer ? viewer.friends : []);
       const all = Object.keys(doc.players)
         .map((id) => playerOf(doc, id))
         .filter(Boolean);
+
+      // أهداف قريبة: مواجهات متكافئة (0.5×–2× من إنتاجك) بلا شرط صداقة
+      if (scope === 'nearby') {
+        const myProd = viewer ? productionPerSec(viewer, ts) : 0;
+        const pool = all.filter((p) => {
+          if (!viewer || p.playerId === viewerId) return false;
+          if (p.lifetime.totalMined < RAID.newPlayerProtectionMined) return false;
+          if (viewer.lifetime.totalMined < RAID.newPlayerProtectionMined) return false;
+          const prod = productionPerSec(p, ts);
+          return prod >= myProd * 0.5 && prod <= myProd * 2;
+        });
+        const picked = pool
+          .map((p) => ({ p, r: rng() }))
+          .sort((a, b) => a.r - b.r)
+          .slice(0, clamp(limit, 1, 8))
+          .map(({ p }) => p);
+        return {
+          scope, label: 'أهداف قريبة',
+          entries: picked.map((p, i) => leaderboardEntry(p, i, 0, viewer, viewerId, ts, viewerFriends)),
+          total: all.length,
+          weekId: weekId(ts),
+        };
+      }
 
       let scoreOf;
       if (scope === 'season') scoreOf = (p) => (p.season.weekId === weekId(ts) ? p.season.score : 0);
@@ -1045,7 +1453,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         .sort((a, b) => b.score - a.score)
         .slice(0, clamp(limit, 1, 100));
 
-      const label = { wealth: 'الثروة', collection: 'المجموعة', season: 'الموسم', friends: 'رفاقي' }[scope] || 'الثروة';
+      const label = { wealth: 'الثروة', collection: 'المجموعة', season: 'الموسم', friends: 'رفاقي', nearby: 'أهداف قريبة' }[scope] || 'الثروة';
       return {
         scope, label,
         entries: list.map(({ p, score }, i) => leaderboardEntry(p, i, score, viewer, viewerId, ts, viewerFriends)),
@@ -1053,6 +1461,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         weekId: weekId(ts),
       };
     }, { persist: false });
+    // لا نكتب الوثيقة عند كل قراءة؛ نُثبّت فقط إذا حدث تدوير موسم/هدف/تنظيف فعلياً.
+    if (changed) await store.mutate((doc) => { maintenance(doc, ts); }, { persist: true });
+    return result;
   }
 
   async function raidLog(playerId) {
@@ -1093,7 +1504,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     return store.mutate((doc) => {
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
-      const cached = replay(p, requestId, ts);
+      const cached = replay(p, requestId, 'tutorial', ts);
       if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
       p.tutorialDone = true;
       const result = { tutorialDone: true };
@@ -1102,7 +1513,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     });
   }
 
-  async function clearNotices(playerId, ids = []) {    const ts = now();
+  async function clearNotices(playerId, ids = []) {
+    const ts = now();
     return store.mutate((doc) => {
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
@@ -1117,23 +1529,62 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   // -------------------------------------------------------------------------
+  // الجلسات: تحقق من النسخة الحالية + تسجيل الخروج (إبطال التوكنات)
+  // -------------------------------------------------------------------------
+
+  /** هل التوكن الصادر بهذه النسخة ما زال صالحاً؟ (تسجيل الخروج يرفع النسخة). */
+  async function sessionValid(playerId, epoch) {
+    const raw = await store.get(playerId);
+    if (!raw) return false;
+    const current = Number.isFinite(Number(raw.sessionEpoch)) ? Math.floor(Number(raw.sessionEpoch)) : 0;
+    return current === (Number(epoch) || 0);
+  }
+
+  /** يرفع نسخة الجلسة فيُبطل كل التوكنات السابقة لهذا اللاعب. */
+  async function logout(playerId) {
+    const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      p.sessionEpoch = saneNumber(p.sessionEpoch, 0, 1e9) + 1;
+      p.lastSeen = ts;
+      return { epoch: p.sessionEpoch };
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // إحصاءات صحية + أدوات اختبار
   // -------------------------------------------------------------------------
 
   async function stats() {
     const doc = await store.snapshot();
-    const players = Object.keys(doc.players || {}).length;
+    const list = Object.values(doc.players || {});
+    const players = list.length;
+    // مؤشرات مراقبة الغارات (المرحلة 5): تُعرض في /api/health دون كشف حسابات.
+    let raidsWon = 0, raidsLost = 0, raiders = 0, active = 0;
+    const ts = now();
+    for (const raw of list) {
+      const life = raw.lifetime || {};
+      raidsWon += Number(life.raidsWon) || 0;
+      raidsLost += Number(life.raidsLost) || 0;
+      if ((Number(life.raidsWon) || 0) > 0) raiders += 1;
+      if ((Number(raw.lastSeen) || 0) > ts - 7 * DAY_MS) active += 1;
+    }
     return {
       players,
-      weekId: weekId(now()),
+      activeWeek: active,
+      weekId: weekId(ts),
       groupContributed: doc.meta?.group?.contributed || 0,
-      event: eventOfWeek(now()).id,
+      event: eventOfWeek(ts).id,
+      raids: { won: raidsWon, lost: raidsLost, raiders, winRate: raidsWon + raidsLost ? Math.round((raidsWon / (raidsWon + raidsLost)) * 100) : null },
     };
   }
 
   return {
     session, getState, mine, upgrade, raid, dailyDig, claim, switchRegion, setTitle,
+    rebirth, legacyUpgrade, buyCosmetic, claimCycleGoal,
     leaderboard, raidLog, invite, clearNotices, completeTutorial, catalog, stats,
+    sessionValid, logout,
     // للاختبارات فقط:
     _internals: { playerOf, normalizePlayer, applyIdle, publicState, touch },
   };

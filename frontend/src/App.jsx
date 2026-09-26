@@ -8,7 +8,9 @@ import MineTab from './components/MineTab.jsx';
 import UpgradesTab from './components/UpgradesTab.jsx';
 import FriendsTab from './components/FriendsTab.jsx';
 import CollectionTab from './components/CollectionTab.jsx';
+import RebirthTab from './components/RebirthTab.jsx';
 import Modals from './components/Modals.jsx';
+import CosmeticSheet from './components/Cosmetics.jsx';
 import Tutorial from './components/Tutorial.jsx';
 
 export default function App() {
@@ -105,6 +107,7 @@ export default function App() {
       {tab === 'upgrades' && <UpgradesTab game={game} catalog={game.catalog} />}
       {tab === 'friends' && <FriendsTab game={game} catalog={game.catalog} />}
       {tab === 'collection' && <CollectionTab game={game} catalog={game.catalog} />}
+      {tab === 'rebirth' && <RebirthTab game={game} />}
 
       <TabBar tab={tab} setTab={setTab} badges={badges} />
 
@@ -121,6 +124,9 @@ export default function App() {
       </div>
 
       <Modals game={game} catalog={game.catalog} onStartTour={() => setTour({ from: tab })} />
+    {game.modal?.type === 'cosmetic' && (
+      <CosmeticSheet game={game} onClose={() => game.setModal(null)} />
+    )}
 
       {tour && (
         <Tutorial

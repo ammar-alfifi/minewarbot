@@ -43,6 +43,11 @@ const server = app.listen(config.port, () => {
   console.log('⚙️  الإعداد:', JSON.stringify(configSummary()));
 });
 
+// تحذير أمني: تفعيل TRUST_PROXY افتراضياً في الإنتاج آمن فقط خلف وكيل موثوق.
+if (config.isProd && config.trustProxy && !process.env.TRUST_PROXY) {
+  console.warn('⚠️  TRUST_PROXY مُفعَّل تلقائياً في الإنتاج — لا تفعّله إلا خلف وكيل موثوق، وإلا أمكن تزوير عنوان IP.');
+}
+
 let bot = null;
 try {
   bot = createBot({ token: config.botToken, frontendUrl: config.frontendUrl, botUsername: config.botUsername, engine });

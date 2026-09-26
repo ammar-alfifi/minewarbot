@@ -56,6 +56,14 @@ export default function CollectionTab({ game, catalog }) {
       </div>
 
       <div className="card">
+        <h3 className="card-title">🎨 {t('cosmetics.title')}</h3>
+        <div className="between">
+          <span className="small muted">{t('cosmetics.hint')}</span>
+          <button className="btn small primary" disabled={busy} onClick={() => setModal({ type: 'cosmetic' })}>🛍️ {t('cosmetics.title')}</button>
+        </div>
+      </div>
+
+      <div className="card">
         <h3 className="card-title">🏆 {t('collection.season')}</h3>
         <div className="between">
           <span className="small">🎯 {t('collection.seasonScore')}: <b>{short(player.season.score)}</b></span>
@@ -72,7 +80,7 @@ export default function CollectionTab({ game, catalog }) {
             )}
           </div>
         </div>
-        <p className="card-sub">نقاط الموسم: كل عملة تعدّنها +1، الجوهرة +250، الأثر +500، والغارة الناجحة +200. تُصفَّر أسبوعياً وتبقى إنجازاتك الدائمة.</p>
+        <p className="card-sub">نقاط الموسم: كل عملة تعدّنها +1، الجوهرة +250، الأثر +500، والغارة الناجحة +250 وحتى +1500 حسب الغنيمة. تُصفَّر أسبوعياً وتبقى إنجازاتك الدائمة.</p>
       </div>
 
       <div className="card">

@@ -42,6 +42,9 @@ export function createApp({ engine, config }) {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('Referrer-Policy', 'no-referrer');
     res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+    // التطبيق يُضمَّن داخل تيليجرام فقط — نمنع التأطير من أي أصل آخر (anti-clickjacking)
+    res.setHeader('Content-Security-Policy', "frame-ancestors 'self' https://web.telegram.org https://*.telegram.org https://t.me");
+    if (config.isProd) res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
     next();
   });
 
@@ -66,6 +69,9 @@ export function createApp({ engine, config }) {
   app.use((err, req, res, next) => {
     if (err?.type === 'entity.parse.failed') {
       return res.status(400).json({ ok: false, error: 'صيغة الطلب غير صالحة', code: 'bad_json' });
+    }
+    if (err?.type === 'entity.too.large') {
+      return res.status(413).json({ ok: false, error: 'الطلب كبير جداً', code: 'payload_too_large' });
     }
     logError('❌ خطأ غير متوقع:', err);
     res.status(500).json({ ok: false, error: 'حدث خطأ في السيرفر — حاول لاحقاً', code: 'server_error' });

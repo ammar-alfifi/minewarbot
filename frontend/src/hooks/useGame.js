@@ -24,8 +24,10 @@ export function useGame() {
   const [boardLoading, setBoardLoading] = useState(false);
   const [raidLog, setRaidLog] = useState({ incoming: [], outgoing: [], shieldUntil: 0 });
   const [invite, setInvite] = useState(null);
+  const [, setClockTick] = useState(0); // نبضة كل ثانية لعرض دخل العمّال الحيّ
 
   const stateRef = useRef(null);
+  const stateAtRef = useRef(Date.now());
   const pendingRef = useRef(0);
   const inFlight = useRef(false);
   const flushTimer = useRef(null);
@@ -58,6 +60,7 @@ export function useGame() {
     if (payload.player) {
       setPlayer(payload.player);
       stateRef.current = payload.player;
+      stateAtRef.current = Date.now();
       const notices = (payload.player.notices || []).filter((n) => !dismissedNotices.current.has(n.id));
       if (notices.length && !modalRef.current) setModal({ type: 'notice', payload: notices });
     }
@@ -87,13 +90,29 @@ export function useGame() {
 
   const bootstrap = useCallback(async () => {
     initTelegram();
+    const startParam = getStartParam();
     try {
+      // داخل تيليجرام: الصلاحية الأولى هي initData. وإن فشل التحقق (auth_date قديم
+      // أو جلسة منتهية)، نتراجع إلى توكن الجلسة المحفوظ قبل إظهار شاشة الخطأ —
+      // حتى لا يتعطّل اللعب بسبب انتهاء صلاحية initData وحدها.
       let payload = null;
-      const startParam = getStartParam();
-      if (!isTelegram() && getSessionToken()) {
+      if (isTelegram()) {
+        try {
+          const session = await api.session({ startParam });
+          if (session.token) setSessionToken(session.token);
+          setMode(session.mode);
+          payload = session;
+          if (session.isNew) setTimeout(() => setModal({ type: 'welcome', payload: session }), 500);
+        } catch (err) {
+          const recoverable = err instanceof ApiError && err.status === 401;
+          if (!recoverable || !getSessionToken()) throw err;
+          // تراجع إلى التوكن الموقّع من السيرفر (يبقى صالحاً 7 أيام)
+        }
+      }
+      if (!payload && getSessionToken()) {
         try {
           payload = await api.state();
-          setMode('guest');
+          setMode(isTelegram() ? 'telegram' : 'guest');
         } catch (err) {
           if (err instanceof ApiError && (err.status === 401 || err.code === 'invalid_token')) {
             setSessionToken('');
@@ -121,6 +140,13 @@ export function useGame() {
   }, [applyServerState]);
 
   useEffect(() => { bootstrap(); }, [bootstrap]);
+
+  // نبضة دورية لإظهار دخل العمّال مباشرةً بين استطلاعات السيرفر
+  useEffect(() => {
+    if (status !== 'ready') return undefined;
+    const id = setInterval(() => setClockTick((x) => x + 1), 1000);
+    return () => clearInterval(id);
+  }, [status]);
 
   const recoverAuth = useCallback(async () => {
     setSessionToken('');
@@ -176,7 +202,7 @@ export function useGame() {
     pendingRef.current += accepted;
     setPending(pendingRef.current);
     haptic('light');
-    const manual = s.power.manual;
+    const manual = s.power.manualExact || s.power.manual || 1;
     let x = window.innerWidth / 2;
     let y = window.innerHeight / 2 - 60;
     if (event) {
@@ -186,7 +212,8 @@ export function useGame() {
         y = rect.top + rect.height * 0.25 + (Math.random() * 30 - 15);
       } catch {}
     }
-    spawnFloat(x, y, `+${manual * accepted}`, 'coins');
+    // نعرض نفس ما سيحتسبه السيرفر تقريباً (floor للقوة الكسرية) بدل الاقتطاع المسبق.
+    spawnFloat(x, y, `+${Math.floor(manual * accepted)}`, 'coins');
     scheduleFlush(280);
   }, [status, scheduleFlush, spawnFloat]);
 
@@ -241,15 +268,24 @@ export function useGame() {
     claim: (kind, id) => run(() => api.claim(kind, id, newRequestId())),
     switchRegion: (regionId) => run(() => api.region(regionId, newRequestId())),
     setTitle: (titleId) => run(() => api.title(titleId, newRequestId())),
+    rebirth: () => run(() => api.rebirth(newRequestId()), { hapticKind: 'heavy' }),
+    legacy: (trackId) => run(() => api.legacy(trackId, newRequestId())),
+    cosmetic: (cosmeticId) => run(() => api.cosmetic(cosmeticId, newRequestId())),
+    cycleGoal: (goalId) => run(() => api.cycleGoal(goalId, newRequestId())),
     raid: (targetId, revenge = false) => run(() => api.raid(targetId, newRequestId(), revenge), { hapticKind: 'heavy' }),
     dismissNotices: async (ids) => {
       ids.forEach((id) => dismissedNotices.current.add(id));
       try {
         const res = await api.clearNotices(ids);
-        if (res.player) { setPlayer(res.player); stateRef.current = res.player; }
+        if (res.player) { setPlayer(res.player); stateRef.current = res.player; stateAtRef.current = Date.now(); }
       } catch {}
     },
     tutorialDone: () => run(() => api.tutorialDone(newRequestId()), { silentErrors: true, hapticKind: 'light' }),
+    logout: async () => {
+      try { await api.logout(); } catch { /* نُكمل الإبطال محلياً حتى لو فشل الطلب */ }
+      setSessionToken('');
+      try { window.location.reload(); } catch {}
+    },
   }), [run]);
 
   const refreshBoard = useCallback(async (scope = board.scope) => {
@@ -299,7 +335,13 @@ export function useGame() {
 
   const nickname = useMemo(() => (mode === 'guest' ? getNickname() : ''), [mode]);
 
-  const displayCoins = (player?.coins || 0) + pending * (player?.power?.manual || 0);
+  // عدّاد متفائل: نقرات معلّقة + دخل العمّال الحيّ المتراكم منذ آخر رد من السيرفر
+  const idlePerSec = player?.power?.idlePerSec || 0;
+  const idleCapSec = (player?.power?.offlineCapHours || 8) * 3600;
+  const idleElapsedSec = player ? Math.min(Math.max(0, (Date.now() - stateAtRef.current) / 1000), idleCapSec) : 0;
+  const idleGain = Math.floor(idleElapsedSec * idlePerSec);
+  const manualPower = player?.power?.manualExact || player?.power?.manual || 0;
+  const displayCoins = (player?.coins || 0) + Math.floor(pending * manualPower) + idleGain;
   const displayGems = player?.gems || 0;
 
   return {

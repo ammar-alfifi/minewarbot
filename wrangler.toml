@@ -9,6 +9,10 @@ name = "minewarrbot"
 main = "cloudflare/worker.js"
 compatibility_date = "2026-09-01"
 
+# روابط معاينة تلقائية لكل نشر (غير إنتاجية) — مفيدة لتجربة نسخة قبل دمجها.
+# ملاحظة: أمر النشر هو `npx wrangler deploy` وليس `wrangler preview` (beta).
+preview_urls = true
+
 # الواجهة المبنية (frontend/dist) تُخدَم مباشرة من الـ Worker نفسه.
 [assets]
 directory = "./frontend/dist"

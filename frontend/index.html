@@ -7,10 +7,51 @@
     <meta name="description" content="Mine War — لعبة تعدين عربية داخل تيليجرام: عدّن، طوّر، واكتشف الآثار مع أصدقائك." />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <title>Mine War — حرب المناجم</title>
-    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <!-- سكربت تيليجرام: نحاول تحميله بلا حجب الصفحة، والتطبيق يعمل حتى لو فشل.
+         (سبق أن أسقط تعطّل هذا السكربت التطبيق كاملاً داخل تيليجرام.) -->
+    <script src="https://telegram.org/js/telegram-web-app.js" async></script>
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      // شبكة أمان: إن فشل تحميل حزمة التطبيق أو رمى خطأ، نعرض رسالة واضحة
+      // بدل شاشة فارغة أو رسالة مبهمة، مع زر إعادة المحاولة.
+      (function () {
+        var shown = false;
+        function showError(msg) {
+          if (shown) return;
+          shown = true;
+          var root = document.getElementById('root');
+          if (!root) return;
+          root.innerHTML =
+            '<div style="min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;font-family:system-ui,Segoe UI,Tahoma,sans-serif;background:#17130f;color:#f5efe6;text-align:center;direction:rtl">' +
+            '<div style="max-width:380px">' +
+            '<div style="font-size:46px">🪨</div>' +
+            '<h2 style="margin:12px 0 8px">تعذّر فتح المنجم</h2>' +
+            '<p style="opacity:.8;margin:0 0 6px">' + String(msg || 'حدث خطأ غير متوقع') + '</p>' +
+            '<p style="opacity:.6;font-size:13px;margin:0 0 16px">أعد فتح التطبيق من زر «⛏️ المنجم» داخل البوت، أو اضغط إعادة المحاولة.</p>' +
+            '<button onclick="location.reload()" style="background:#f0b429;color:#17130f;border:0;border-radius:10px;padding:12px 22px;font-weight:800;font-size:16px;cursor:pointer">🔄 إعادة المحاولة</button>' +
+            '</div></div>';
+        }
+        window.addEventListener('error', function (e) {
+          if (e && e.target && e.target.tagName === 'SCRIPT') {
+            showError('تعذّر تحميل ملفات التطبيق — تحقق من الاتصال.');
+          }
+        }, true);
+        window.addEventListener('unhandledrejection', function () {
+          // نترك React يعالج أخطاء الشبكة العادية؛ نعرض فقط إن بقي الجذر فارغاً.
+          setTimeout(function () {
+            var root = document.getElementById('root');
+            if (root && !root.childElementCount) showError('تعذّر تشغيل اللعبة.');
+          }, 2500);
+        });
+        // إن لم يُركّب React خلال 12 ثانية (حزمة محجوبة/خطأ صامت) نعرض رسالة.
+        setTimeout(function () {
+          var root = document.getElementById('root');
+          if (root && !root.childElementCount) showError('تأخّر تحميل اللعبة — تحقق من الاتصال ثم أعد المحاولة.');
+        }, 12000);
+      })();
+    </script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>
