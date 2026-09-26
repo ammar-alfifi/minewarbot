@@ -90,13 +90,29 @@ export function useGame() {
 
   const bootstrap = useCallback(async () => {
     initTelegram();
+    const startParam = getStartParam();
     try {
+      // داخل تيليجرام: الصلاحية الأولى هي initData. وإن فشل التحقق (auth_date قديم
+      // أو جلسة منتهية)، نتراجع إلى توكن الجلسة المحفوظ قبل إظهار شاشة الخطأ —
+      // حتى لا يتعطّل اللعب بسبب انتهاء صلاحية initData وحدها.
       let payload = null;
-      const startParam = getStartParam();
-      if (!isTelegram() && getSessionToken()) {
+      if (isTelegram()) {
+        try {
+          const session = await api.session({ startParam });
+          if (session.token) setSessionToken(session.token);
+          setMode(session.mode);
+          payload = session;
+          if (session.isNew) setTimeout(() => setModal({ type: 'welcome', payload: session }), 500);
+        } catch (err) {
+          const recoverable = err instanceof ApiError && err.status === 401;
+          if (!recoverable || !getSessionToken()) throw err;
+          // تراجع إلى التوكن الموقّع من السيرفر (يبقى صالحاً 7 أيام)
+        }
+      }
+      if (!payload && getSessionToken()) {
         try {
           payload = await api.state();
-          setMode('guest');
+          setMode(isTelegram() ? 'telegram' : 'guest');
         } catch (err) {
           if (err instanceof ApiError && (err.status === 401 || err.code === 'invalid_token')) {
             setSessionToken('');
