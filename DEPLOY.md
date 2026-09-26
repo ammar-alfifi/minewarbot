@@ -35,6 +35,7 @@
 ### ب) النشر من اللوحة (بدون أوامر)
 1. **Workers & Pages → Create → Import a Git repository** واختر `minewarbot`.
 2. **Build command**: `npm ci && npm run build` — **Deploy command**: `npx wrangler deploy`.
+   > ⚠️ لا تستخدم `npx wrangler preview` (أمر beta يتطلب كتلة `previews` وأسراراً منفصلة). أمر الإنتاج هو `npx wrangler deploy`.
 3. بعد أول نشر: **Settings → Bindings → Add → D1 database** باسم `DB` واربط قاعدة `minewarr`.
 4. **Settings → Variables and Secrets** وأضف الأسرار: `BOT_TOKEN`، `SESSION_SECRET` (`openssl rand -hex 32`)، `WEBHOOK_SECRET` (نصّ عشوائي)، `ADMIN_SECRET` (نصّ عشوائي). وأضف متغيرات عادية: `BOT_USERNAME=MineWarrBot` و`APP_URL=https://<اسم-مشروعك>.<حسابك>.workers.dev`.
 5. أعد **Deploy** بعد إضافة الربط والمتغيرات.
@@ -57,10 +58,15 @@ curl -X POST "https://<رابطك>/api/admin/import" \
   --data-binary @backend/backups/players-<تاريخ>.json
 ```
 
-### هـ) التطوير محلياً
+### هـ) أوامر الـ Worker (مهم)
 ```bash
-npm run cf:dev     # Worker + D1 محليان عبر wrangler dev
+npm run cf:dry      # تحقق من البناء دون نشر
+npm run cf:deploy   # النشر الفعلي: wrangler deploy
+npm run cf:dev      # Worker + D1 محليان عبر wrangler dev
 ```
+> ⚠️ **لا تستخدم `npx wrangler preview`** — أمر تجريبي (beta) يتطلب كتلة `previews` وأسرار معاينة منفصلة، ويفشل برسالة `missing a 'previews' block`. أمر النشر الصحيح في لوحة Cloudflare وفي كل السيناريوهات هو:
+> `npx wrangler deploy` (أو `npm run cf:deploy`).
+> إن أردت تجربة نسخة قبل الإنتاج، استخدم **Preview URLs** المفعّلة في `wrangler.toml` (`[preview_urls]`) مع `wrangler versions upload`، أو شغّل المشروع محلياً بـ `npm run cf:dev`.
 
 ملاحظات:
 - الحد المجاني اليومي من Cloudflare كبير ويكفي لعبة بين الأصدقاء، وبلا أي بطاقة.
