@@ -723,8 +723,9 @@ test('البعث يعيد تأسيس المنجم ويحوّل الإنجاز إ
   assert.equal(res.result.cores, 1);
   assert.equal(res.result.rebirths, 1);
   assert.equal(res.player.coins, 0, 'يُصفّر رصيد الدورة');
-  assert.equal(res.player.workers, 0);
-  assert.equal(res.player.equipment.pickaxe, 1);
+  assert.equal(res.player.workers, 1, 'بداية متقدّمة: عامل واحد بعد أول بعث');
+  assert.equal(res.player.equipment.pickaxe, 2, 'بداية متقدّمة: معول مستوى 2 بعد أول بعث');
+  assert.deepEqual(res.result.headStart, { pickaxe: 2, workers: 1 });
   assert.deepEqual(res.player.regionsUnlocked, ['surface']);
   assert.equal(res.player.rebirth.runMined, 0);
   assert.equal(res.player.rebirth.threshold, 150_000_000, 'العتبة التالية ×3');
@@ -738,6 +739,41 @@ test('البعث يعيد تأسيس المنجم ويحوّل الإنجاز إ
 
   const replay = await engine.rebirth('tg_1', 'req_rebrth1');
   assert.equal(replay.replayed, true, 'لا يُنفَّذ البعث مرتين لنفس الطلب');
+});
+
+test('بداية الدورة تتدرّج مع عدد البعثات وتُسقَف بنصف شروط البعث', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  // الحالة تعرض البداية المتقدّمة للدورة القادمة.
+  let st = await engine.getState('tg_1');
+  assert.deepEqual(st.player.rebirth.headStart, { pickaxe: 2, workers: 1 }, 'البداية القادمة بعد أول بعث');
+
+  // بعث رقم 4: معول 5 وعمّال 4 (المعادلة 1+عدد البعثات).
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.rebirthCount = 3;
+    p.equipment.pickaxe = 20; p.workers = 10;
+    p.regionsUnlocked = REGIONS.map((r) => r.id);
+    p.runMined = rebirthThreshold(3); p.runManualMined = manualRequirement(rebirthThreshold(3));
+  });
+  st = await engine.getState('tg_1');
+  assert.deepEqual(st.player.rebirth.headStart, { pickaxe: 5, workers: 4 }, 'التدرّج حسب عدد البعثات');
+  const reb = await engine.rebirth('tg_1', 'req_head01');
+  assert.equal(reb.player.equipment.pickaxe, 5);
+  assert.equal(reb.player.workers, 4);
+  assert.equal(reb.player.rebirth.count, 4);
+
+  // عدد كبير جدًا: يتوقف عند السقف (نصف شروط البعث: 10 و5).
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.rebirthCount = 20;
+    p.equipment.pickaxe = 20; p.workers = 10;
+    p.regionsUnlocked = REGIONS.map((r) => r.id);
+    p.runMined = rebirthThreshold(20); p.runManualMined = manualRequirement(rebirthThreshold(20));
+  });
+  const capped = await engine.rebirth('tg_1', 'req_head02');
+  assert.equal(capped.player.equipment.pickaxe, 10, 'سقف المعول = نصف الشرط');
+  assert.equal(capped.player.workers, 5, 'سقف العمّال = نصف الشرط');
 });
 
 test('البعث يُرفض إذا نقص التعدين اليدوي (الدخل الخامل لا يكفي)', async () => {

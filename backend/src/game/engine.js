@@ -14,6 +14,7 @@ import {
   MILESTONES, milestoneProgress, TITLES, GROUP_GOAL, groupChestStatus, REFERRAL,
   SEASON_REWARDS, seasonRewardFor,
   REBIRTH, rebirthThreshold, rebirthCores, rebirthConditions, qualifiesForRebirthSeed, RUN_MINED_CAP, seedManualMined,
+  rebirthHeadStart,
   CYCLE_GOALS, cycleGoalProgress, REBIRTH_BADGES, rebirthBadge,
   LEGACY_TRACKS, LEGACY_COST, legacyRanks, COSMETICS,
   unlockedRegions, nextRegion, nextMilestone, saneNumber,
@@ -668,6 +669,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
           minWorkers: REBIRTH.minWorkers,
           totalRegions: REGIONS.length,
           nextThreshold: rebirthThreshold((p.rebirthCount || 0) + 1),
+          headStart: rebirthHeadStart((p.rebirthCount || 0) + 1),
           conditions: st.conditions,
           eligible: st.eligible,
           cores: st.cores,
@@ -767,6 +769,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         manualShare: REBIRTH.manualShare,
         thresholdMult: REBIRTH.thresholdMult, minPickaxe: REBIRTH.minPickaxe,
         minWorkers: REBIRTH.minWorkers, maxCores: REBIRTH.maxCores,
+        headStart: { ...REBIRTH.headStart },
         keepNote: REBIRTH.keepNote, resetNote: REBIRTH.resetNote,
       },
       legacyTracks: Object.values(LEGACY_TRACKS),
@@ -1304,11 +1307,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       const fromCount = p.rebirthCount;
       const before = { totalMined: p.lifetime.totalMined, relics: Object.keys(p.relics).length, gems: p.gems };
 
+      // الدورة الجديدة تبدأ بمعول وعمّال متدرّجين حسب عدد مرات البعث (بداية متقدّمة).
+      const nextCount = saneNumber(p.rebirthCount, 0, 1e6) + 1;
+      const head = rebirthHeadStart(nextCount);
       // يُصفَّر تطور المنجم الجاري فقط؛ كل السجل والعلاقات والمجموعة تبقى.
       p.coins = 0;
-      p.workers = 0;
+      p.workers = head.workers;
       p.idleCarry = 0;
-      p.equipment = { pickaxe: 1, lamp: 1, helmet: 1 };
+      p.equipment = { pickaxe: head.pickaxe, lamp: 1, helmet: 1 };
       p.facilities = { cart: 1, smelter: 1, storage: 1 };
       p.regionId = REGIONS[0].id;
       p.regionsUnlocked = [REGIONS[0].id];
@@ -1316,13 +1322,13 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       p.runManualMined = 0;
       p.runRelics = 0;
       p.cycleGoalsClaimed = [];
-      p.rebirthCount = saneNumber(p.rebirthCount, 0, 1e6) + 1;
+      p.rebirthCount = nextCount;
       p.legacyCores = saneNumber(p.legacyCores, 0, 1e6) + cores;
       p.lastTick = ts;
 
       const result = {
         rebirths: p.rebirthCount, cores, legacyCores: p.legacyCores,
-        threshold: rebirthThreshold(p.rebirthCount), kept: before,
+        headStart: head, threshold: rebirthThreshold(p.rebirthCount), kept: before,
       };
       pushNotice(p, 'rebirth', result, ts);
       remember(p, requestId, 'rebirth', result, ts);

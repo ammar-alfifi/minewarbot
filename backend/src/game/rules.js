@@ -683,8 +683,11 @@ export const REBIRTH = {
   minWorkers: 10,
   coresThresholdMult: 2,           // الأساس=1 نواة، 2×=2 نوى، 4×=3 نوى
   maxCores: 3,
+  // بداية متقدّمة للدورة الجديدة: معول وعمّال متدرّجان حسب عدد مرات البعث،
+  // حتى لا يبدأ اللاعب من الصفر التام بعد كل بعث (تخفّف ألم إعادة البناء).
+  headStart: { pickaxePerRebirth: 1, maxPickaxe: 10, workersPerRebirth: 1, maxWorkers: 5 },
   keepNote: 'يبقى دائماً: الآثار والمجموعة، الجواهر، الألقاب، الأصدقاء والإحالات، مجموع التعدين مدى الحياة، الإنجازات، سجل المواسم، مساهمة الجماعة، وسجل الغارات. لا تُصفَّر مؤقتات الحفرة اليومية وسلسلة الزيارة والدرع.',
-  resetNote: 'يُصفَّر لبدء منجم جديد: العملات، العمّال، مستويات المعدات والمرافق، المنطقة الحالية والمناطق المفتوحة في الدورة، وعدّادا تعدين الدورة.',
+  resetNote: 'يُصفَّر لبدء منجم جديد: العملات، مستويات المعدات والمرافق، المنطقة الحالية والمناطق المفتوحة في الدورة، وعدّادا تعدين الدورة — وتبدأ الدورة الجديدة بمعول وعمّال متدرّجين حسب عدد مرات البعث.',
 };
 
 /** عتبة تعدين الدورة رقم cycles (نمو هندسي ×thresholdMult). */
@@ -707,6 +710,19 @@ export function rebirthCores(runMined, threshold) {
   if (ratio >= REBIRTH.coresThresholdMult) return 2;               // 2×
   if (ratio >= 1) return 1;
   return 0;
+}
+
+/**
+ * بداية الدورة الجديدة بعد n بعث: معول وعمّال متدرّجان بسقف نصف شروط البعث،
+ * فيبقى للبعث عائد ملموس ويخفّ ألم إعادة البناء من الصفر.
+ */
+export function rebirthHeadStart(rebirths) {
+  const n = Math.max(0, Math.floor(Number(rebirths) || 0));
+  const hs = REBIRTH.headStart;
+  return {
+    pickaxe: Math.min(hs.maxPickaxe, 1 + n * hs.pickaxePerRebirth),
+    workers: Math.min(hs.maxWorkers, n * hs.workersPerRebirth),
+  };
 }
 
 /** سقف عدّاد تعدين الدورة: يكفي لإنجاز أكبر عدد دورات مقصود بحد النوى. */
@@ -811,13 +827,13 @@ export const LEGACY_COST = 1;
 export const LEGACY_TRACKS = {
   vein_memory: {
     id: 'vein_memory', name: 'ذاكرة العروق', emoji: '🪨', maxRank: 4,
-    desc: '+5% على عوائد العملات من التعدين والعمال لكل رتبة.',
-    perRank: { coinMult: 0.05 },
+    desc: '+8% على عوائد العملات من التعدين والعمال لكل رتبة.',
+    perRank: { coinMult: 0.08 },
   },
   digger_hand: {
     id: 'digger_hand', name: 'يد المنقّب', emoji: '✊', maxRank: 4,
-    desc: '+5% على عوائد التعدين اليدوي فقط لكل رتبة.',
-    perRank: { manualMult: 0.05 },
+    desc: '+8% على عوائد التعدين اليدوي فقط لكل رتبة.',
+    perRank: { manualMult: 0.08 },
   },
   lineage_vault: {
     id: 'lineage_vault', name: 'مخزن السلالة', emoji: '🏗️', maxRank: 2,
