@@ -34,6 +34,8 @@ const fail = (msg, status = 400, code = 'game_error') => {
 
 const clamp = (n, min, max) => Math.max(min, Math.min(max, n));
 const REQUEST_ID_RE = /^[a-zA-Z0-9_-]{6,64}$/;
+// سقف حساب «من لا يجد هدفاً» في مؤشرات الصحة (تكلفة تربيعية) — يُترك null فوقه.
+const RAID_STATS_NEARBY_CAP = 600;
 
 export function createEngine({ store, botUsername = 'MineWarrBot', now = () => Date.now(), rng = Math.random }) {
   // -------------------------------------------------------------------------
@@ -1405,6 +1407,19 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     return entry;
   }
 
+  // أهداف قريبة متكافئة (0.5×–2× من إنتاجك) بلا شرط صداقة — تُعاد قائمة المنافسين المؤهلين
+  function nearbyPool(all, viewer, ts) {
+    if (!viewer) return [];
+    if (viewer.lifetime.totalMined < RAID.newPlayerProtectionMined) return [];
+    const myProd = productionPerSec(viewer, ts);
+    return all.filter((p) => {
+      if (p.playerId === viewer.playerId) return false;
+      if (p.lifetime.totalMined < RAID.newPlayerProtectionMined) return false;
+      const prod = productionPerSec(p, ts);
+      return prod >= myProd * 0.5 && prod <= myProd * 2;
+    });
+  }
+
   async function leaderboard(scope = 'wealth', viewerId = null, limit = 50) {
     const ts = now();
     let changed = false;
@@ -1418,14 +1433,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
       // أهداف قريبة: مواجهات متكافئة (0.5×–2× من إنتاجك) بلا شرط صداقة
       if (scope === 'nearby') {
-        const myProd = viewer ? productionPerSec(viewer, ts) : 0;
-        const pool = all.filter((p) => {
-          if (!viewer || p.playerId === viewerId) return false;
-          if (p.lifetime.totalMined < RAID.newPlayerProtectionMined) return false;
-          if (viewer.lifetime.totalMined < RAID.newPlayerProtectionMined) return false;
-          const prod = productionPerSec(p, ts);
-          return prod >= myProd * 0.5 && prod <= myProd * 2;
-        });
+        const pool = nearbyPool(all, viewer, ts);
         const picked = pool
           .map((p) => ({ p, r: rng() }))
           .sort((a, b) => a.r - b.r)
@@ -1558,17 +1566,33 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
   async function stats() {
     const doc = await store.snapshot();
-    const list = Object.values(doc.players || {});
-    const players = list.length;
+    const ts = now();
+    const all = Object.keys(doc.players || {})
+      .map((id) => playerOf(doc, id))
+      .filter(Boolean);
+    const players = all.length;
     // مؤشرات مراقبة الغارات (المرحلة 5): تُعرض في /api/health دون كشف حسابات.
     let raidsWon = 0, raidsLost = 0, raiders = 0, active = 0;
-    const ts = now();
-    for (const raw of list) {
-      const life = raw.lifetime || {};
+    let revenges = 0, lossTotal = 0, lossCount = 0;
+    for (const p of all) {
+      const life = p.lifetime || {};
       raidsWon += Number(life.raidsWon) || 0;
       raidsLost += Number(life.raidsLost) || 0;
       if ((Number(life.raidsWon) || 0) > 0) raiders += 1;
-      if ((Number(raw.lastSeen) || 0) > ts - 7 * DAY_MS) active += 1;
+      if ((Number(p.lastSeen) || 0) > ts - 7 * DAY_MS) active += 1;
+      // مرات الثأر ومتوسط الخسارة من سجل الغارات الصادر (محدود بطول السجل)
+      for (const e of Array.isArray(p.outgoing) ? p.outgoing : []) {
+        if (e && e.revenge) revenges += 1;
+        const lost = Number(e && e.lost) || 0;
+        if (lost > 0) { lossTotal += lost; lossCount += 1; }
+      }
+    }
+    // نسبة المؤهلين للغزو ممن لا يجدون هدفاً قريباً متكافئاً — لأعداد معقولة فقط.
+    let targetless = null, targetlessShare = null;
+    const eligible = all.filter((p) => (Number(p.lifetime?.totalMined) || 0) >= RAID.newPlayerProtectionMined);
+    if (eligible.length && eligible.length <= RAID_STATS_NEARBY_CAP) {
+      targetless = eligible.filter((p) => nearbyPool(all, p, ts).length === 0).length;
+      targetlessShare = Math.round((targetless / eligible.length) * 100);
     }
     return {
       players,
@@ -1576,7 +1600,18 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       weekId: weekId(ts),
       groupContributed: doc.meta?.group?.contributed || 0,
       event: eventOfWeek(ts).id,
-      raids: { won: raidsWon, lost: raidsLost, raiders, winRate: raidsWon + raidsLost ? Math.round((raidsWon / (raidsWon + raidsLost)) * 100) : null },
+      raids: {
+        won: raidsWon,
+        lost: raidsLost,
+        raiders,
+        raiderShare: active ? Math.round((raiders / active) * 100) : null,
+        winRate: raidsWon + raidsLost ? Math.round((raidsWon / (raidsWon + raidsLost)) * 100) : null,
+        revenges,
+        avgLoss: lossCount ? Math.round(lossTotal / lossCount) : 0,
+        eligible: eligible.length,
+        targetless,
+        targetlessShare,
+      },
     };
   }
 

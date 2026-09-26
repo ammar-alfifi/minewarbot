@@ -68,6 +68,9 @@ test('فحص الصحة يعمل دون مصادقة', async () => {
   const data = await res.json();
   assert.equal(data.ok, true);
   assert.ok(data.players >= 0);
+  assert.ok(data.raids && typeof data.raids === 'object', 'مؤشرات الغارات متاحة للرصد');
+  assert.equal(typeof data.raids.revenges, 'number');
+  assert.equal(typeof data.raids.avgLoss, 'number');
 });
 
 test('جلسة الضيف تصدر توكن وتفتح الحالة', async () => {
