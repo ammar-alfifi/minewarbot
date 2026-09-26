@@ -410,3 +410,45 @@ test('تسجيل الخروج يُبطل توكن الجلسة عبر نسخة �
   assert.equal(await engine.sessionValid('tg_1', s.sessionEpoch), false, 'التوكن القديم أُبطل');
   assert.equal(await engine.sessionValid('tg_1', out.epoch), true);
 });
+
+test('دخل العمّال لا يرفع هدف الجماعة ولا نقاط الموسم (ضد تضخّم الخامل)', async () => {
+  const { engine, store, clock } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.workers = 2;
+    p.lastTick = clock.t;
+    p.lifetime.totalMined = 0;
+    p.season.score = 0;
+    doc.meta.group.contributed = 0;
+    doc.meta.group.byPlayer = {};
+  });
+  clock.t += 10 * HOUR;
+  await engine.getState('tg_1');
+  const snap = await store.mutate((doc) => ({
+    group: doc.meta.group.contributed,
+    season: doc.players.tg_1.season.score,
+    mined: doc.players.tg_1.lifetime.totalMined,
+  }));
+  assert.equal(snap.group, 0, 'الدخل السلبي لا يُحتسب لهدف الجماعة');
+  assert.equal(snap.season, 0, 'الدخل السلبي لا يمنح نقاط موسم');
+  assert.ok(snap.mined > 0, 'لكنه يرفع مجموع التعدين لفتح المناطق');
+});
+
+test('يُنظّف ضيوف المتصفح الفارغين المنقطعين (30+ يوماً) دون المساس بذوي التقدّم', async () => {
+  const { engine, store, clock } = setup();
+  const guest = { playerId: 'guest_stale', name: 'ضيف', photoUrl: null, mode: 'guest' };
+  await engine.session(guest);
+  const keeper = { playerId: 'guest_keeper', name: 'ضيف نشط', photoUrl: null, mode: 'guest' };
+  await engine.session(keeper);
+  await store.mutate((doc) => {
+    const stale = doc.players.guest_stale;
+    stale.coins = 0; stale.gems = 0; stale.workers = 0; stale.lifetime.totalMined = 0;
+    stale.lastSeen = clock.t - 31 * 24 * HOUR;
+    // الفارغ المنقطع فقط هو المرشّح
+  });
+  clock.t += 2 * HOUR; // لتجاوز حارس التنظيف الساعي
+  await engine.leaderboard('wealth', null);
+  assert.equal(await store.get('guest_stale'), null, 'الضيف الفارغ المنقطع يُنظّف');
+  assert.ok(await store.get('guest_keeper'), 'الضيف صاحب الرصيد يبقى');
+});

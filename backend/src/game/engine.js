@@ -5,7 +5,7 @@
 
 import {
   RARITIES, REGIONS, RELICS, EQUIPMENT, FACILITIES, WORKER, BOOST,
-  FINDS, EVENTS, eventOfWeek, weekId, dayId,
+  FINDS, EVENTS, eventOfWeek, weekId, dayId, DAY_MS, HOUR_MS,
   OFFLINE, offlineCapHours, powerOf, findChances,
   upgradeCost, workerCost, workerBatchCost, upgradeBatchCost,
   regionById, regionIndex, pickRelic, collectionScore,
@@ -106,7 +106,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.friends = Array.isArray(p.friends) ? [...new Set(p.friends.filter((f) => typeof f === 'string' && f !== id))].slice(0, REFERRAL.maxFriends) : [];
     p.referredBy = typeof p.referredBy === 'string' ? p.referredBy : null;
     p.notices = Array.isArray(p.notices) ? p.notices.slice(-20) : [];
-    p.actionLog = Array.isArray(p.actionLog) ? p.actionLog.slice(-40) : [];
+    p.actionLog = Array.isArray(p.actionLog) ? p.actionLog.slice(-100) : [];
     p.dailyAt = saneNumber(p.dailyAt, 0, 1e15);
     p.visitAt = saneNumber(p.visitAt, 0, 1e15);
     p.visitStreak = clamp(saneNumber(p.visitStreak, 0, 7), 0, 7);
@@ -192,9 +192,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     return meta;
   }
 
+  /**
+   * الصيانة الدورية: تدوير الموسم/هدف المجموعة/الصندوق + تنظيف الضيوف التائهين.
+   * تُرجع true إذا غيّرت شيئاً يحتاج تثبيتاً على المخزن الدائم (تُستخدم في leaderboard).
+   */
   function maintenance(doc, ts) {
     const meta = ensureMeta(doc, ts);
     const wk = weekId(ts);
+    let changed = false;
 
     // نهاية الموسم: أرشفة النتائج وحفظ الإنجاز الدائم
     if (meta.season.weekId !== wk) {
@@ -221,11 +226,13 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         });
       }
       meta.season = { weekId: wk, scores: {} };
+      changed = true;
     }
 
     // هدف الجماعة الأسبوعي
     if (meta.group.weekId !== wk) {
       meta.group = { weekId: wk, contributed: 0, byPlayer: {} };
+      changed = true;
     }
 
     // الصندوق الجماعي عند بلوغ الهدف: مرة واحدة لكل مساهم في الأسبوع
@@ -237,9 +244,38 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         p.groupChestWeek = wk;
         addGems(doc, p, GROUP_GOAL.chestGems, { ts, season: false });
         pushNotice(p, 'group_chest', { gems: GROUP_GOAL.chestGems, target: GROUP_GOAL.target, contribution }, ts);
+        changed = true;
       }
     }
-    return meta;
+
+    // تنظيف ضيوف التطوير الفارغين المنقطعين (مرة كل ساعة على الأكثر — لا يمسّ تيليجرام)
+    if (!meta.lastPrune || ts - meta.lastPrune >= HOUR_MS) {
+      meta.lastPrune = ts;
+      if (pruneStaleGuests(doc, ts)) changed = true;
+    }
+
+    return changed;
+  }
+
+  /** يحذف حسابات الضيوف بلا أي تقدّم ومنقطعة منذ 30 يوماً (بقايا فتحات المتصفح). */
+  function pruneStaleGuests(doc, ts) {
+    const CUTOFF = 30 * DAY_MS;
+    let pruned = false;
+    for (const [id, raw] of Object.entries(doc.players)) {
+      if (!raw || raw.mode !== 'guest') continue;
+      const lastSeen = Number(raw.lastSeen) || Number(raw.createdAt) || 0;
+      if (ts - lastSeen < CUTOFF) continue;
+      const coins = Number(raw.coins) || 0;
+      const gems = Number(raw.gems) || 0;
+      const workers = Number(raw.workers) || 0;
+      const totalMined = (raw.lifetime && Number(raw.lifetime.totalMined)) || Number(raw.totalMined) || 0;
+      const relics = raw.relics && typeof raw.relics === 'object' ? Object.keys(raw.relics).length : 0;
+      const friends = Array.isArray(raw.friends) ? raw.friends.length : 0;
+      if (coins > 0 || gems > 0 || workers > 0 || totalMined > 0 || relics > 0 || friends > 0) continue;
+      delete doc.players[id];
+      pruned = true;
+    }
+    return pruned;
   }
 
   // -------------------------------------------------------------------------
@@ -258,16 +294,18 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     meta.season.scores[p.playerId] = p.season.score;
   }
 
-  function addCoins(doc, p, amount, ts, { mined = true } = {}) {
+  function addCoins(doc, p, amount, ts, { mined = true, season = true, group = true } = {}) {
     const value = Math.floor(amount);
     if (value <= 0) return 0;
     p.coins = Math.min(1e15, p.coins + value);
     if (mined) {
       p.lifetime.totalMined += value;
-      addSeason(doc, p, value, ts);
-      const meta = ensureMeta(doc, ts);
-      meta.group.contributed += value;
-      meta.group.byPlayer[p.playerId] = (meta.group.byPlayer[p.playerId] || 0) + value;
+      if (season) addSeason(doc, p, value, ts);
+      if (group) {
+        const meta = ensureMeta(doc, ts);
+        meta.group.contributed += value;
+        meta.group.byPlayer[p.playerId] = (meta.group.byPlayer[p.playerId] || 0) + value;
+      }
     }
     return value;
   }
@@ -315,7 +353,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     const exact = rate * effective + (p.idleCarry || 0);
     const coins = Math.floor(exact);
     p.idleCarry = Math.min(Math.max(exact - coins, 0), 1);
-    if (coins > 0) addCoins(doc, p, coins, ts, { mined: true });
+    // يمنح دخل العمّال عملات ويرفع مجموع التعدين (فتُفتح المناطق)، لكنه لا يضخّم
+    // هدف الجماعة الأسبوعي ولا نقاط الموسم حتى لا يحصد اللاعب الخامل السباق.
+    if (coins > 0) addCoins(doc, p, coins, ts, { mined: true, season: false, group: false });
     return {
       coins,
       seconds: Math.floor(effective),
@@ -374,7 +414,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   function remember(p, requestId, type, result, ts) {
     if (!requestId || !REQUEST_ID_RE.test(requestId)) return;
     p.actionLog.push({ id: requestId, type, result, at: ts });
-    p.actionLog = p.actionLog.filter((e) => ts - e.at < 60 * 60 * 1000).slice(-40);
+    p.actionLog = p.actionLog.filter((e) => ts - e.at < 60 * 60 * 1000).slice(-100);
   }
 
   // -------------------------------------------------------------------------
@@ -427,7 +467,6 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     const power = powerOf(p, ts);
     const chances = findChances(p, ts);
     const capHours = offlineCapHours(p);
-    const today = dayId(ts);
     const winsToday = p.raid.day === dayId(ts) ? p.raid.winsToday : 0;
     const doneClaims = new Set((p.groupClaims.weekId === weekId(ts) ? p.groupClaims.ids : []));
     const group = ensureMeta(doc, ts).group;
@@ -1037,8 +1076,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
   async function leaderboard(scope = 'wealth', viewerId = null, limit = 50) {
     const ts = now();
-    return store.mutate((doc) => {
-      maintenance(doc, ts);
+    let changed = false;
+    const result = await store.mutate((doc) => {
+      changed = maintenance(doc, ts);
       const viewer = playerOf(doc, viewerId);
       const viewerFriends = new Set(viewer ? viewer.friends : []);
       const all = Object.keys(doc.players)
@@ -1066,7 +1106,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         total: all.length,
         weekId: weekId(ts),
       };
-    });
+    }, { persist: false });
+    // لا نكتب الوثيقة عند كل قراءة؛ نُثبّت فقط إذا حدث تدوير موسم/هدف/تنظيف فعلياً.
+    if (changed) await store.mutate((doc) => { maintenance(doc, ts); }, { persist: true });
+    return result;
   }
 
   async function raidLog(playerId) {
@@ -1116,7 +1159,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     });
   }
 
-  async function clearNotices(playerId, ids = []) {    const ts = now();
+  async function clearNotices(playerId, ids = []) {
+    const ts = now();
     return store.mutate((doc) => {
       const p = playerOf(doc, playerId);
       if (!p) fail('لاعب غير معروف', 401, 'unknown_player');

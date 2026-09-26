@@ -186,7 +186,7 @@ export function useGame() {
     pendingRef.current += accepted;
     setPending(pendingRef.current);
     haptic('light');
-    const manual = s.power.manual;
+    const manual = s.power.manualExact || s.power.manual || 1;
     let x = window.innerWidth / 2;
     let y = window.innerHeight / 2 - 60;
     if (event) {
@@ -196,7 +196,8 @@ export function useGame() {
         y = rect.top + rect.height * 0.25 + (Math.random() * 30 - 15);
       } catch {}
     }
-    spawnFloat(x, y, `+${manual * accepted}`, 'coins');
+    // نعرض نفس ما سيحتسبه السيرفر تقريباً (floor للقوة الكسرية) بدل الاقتطاع المسبق.
+    spawnFloat(x, y, `+${Math.floor(manual * accepted)}`, 'coins');
     scheduleFlush(280);
   }, [status, scheduleFlush, spawnFloat]);
 
@@ -319,7 +320,8 @@ export function useGame() {
   const idleCapSec = (player?.power?.offlineCapHours || 8) * 3600;
   const idleElapsedSec = player ? Math.min(Math.max(0, (Date.now() - stateAtRef.current) / 1000), idleCapSec) : 0;
   const idleGain = Math.floor(idleElapsedSec * idlePerSec);
-  const displayCoins = (player?.coins || 0) + pending * (player?.power?.manual || 0) + idleGain;
+  const manualPower = player?.power?.manualExact || player?.power?.manual || 0;
+  const displayCoins = (player?.coins || 0) + Math.floor(pending * manualPower) + idleGain;
   const displayGems = player?.gems || 0;
 
   return {
