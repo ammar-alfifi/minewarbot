@@ -111,6 +111,7 @@ export const api = {
   rebirth: (requestId) => request('/api/actions/rebirth', { method: 'POST', body: { requestId } }),
   legacy: (trackId, requestId) => request('/api/actions/legacy', { method: 'POST', body: { trackId, requestId } }),
   cosmetic: (cosmeticId, requestId) => request('/api/actions/cosmetic', { method: 'POST', body: { cosmeticId, requestId } }),
+  cycleGoal: (goalId, requestId) => request('/api/actions/cycle-goal', { method: 'POST', body: { goalId, requestId } }),
   clearNotices: (ids = []) => request('/api/actions/notices', { method: 'POST', body: { ids } }),
   tutorialDone: (requestId) => request('/api/actions/tutorial', { method: 'POST', body: { requestId } }),
   leaderboard: (scope = 'wealth', limit = 50) => request(`/api/leaderboard?scope=${encodeURIComponent(scope)}&limit=${limit}`),

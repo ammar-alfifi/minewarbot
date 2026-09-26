@@ -701,7 +701,9 @@ export function rebirthCores(runMined, threshold) {
 /** شروط أهلية البعث للدورة الحالية. */
 export function rebirthConditions(player) {
   const threshold = rebirthThreshold(player.rebirthCount || 0);
-  const allRegions = (player.regionsUnlocked || []).length >= REGIONS.length;
+  // نعدّ المناطق الفريدة الصالحة فقط، فلا يخدع التكرار/المعرّفات القديمة شرط «كل المناطق».
+  const regionsSet = new Set((player.regionsUnlocked || []).filter((r) => REGIONS.some((x) => x.id === r)));
+  const allRegions = regionsSet.size >= REGIONS.length;
   const cond = {
     regions: allRegions,
     runMined: Number(player.runMined || 0) >= threshold,
@@ -723,6 +725,60 @@ export function qualifiesForRebirthSeed(player) {
     && (player.regionsUnlocked || []).length >= REGIONS.length
     && (player.equipment?.pickaxe || 1) >= REBIRTH.minPickaxe
     && (player.workers || 0) >= REBIRTH.minWorkers;
+}
+
+// ---------------------------------------------------------------------------
+// أهداف الدورة (Cycle Goals) — أهداف اختيارية تُصفَّر مع كل بعث فتعطي كل دورة
+// اتجاهًا واضحًا. مكافأتها عملات مؤقتة (تساعد على تجهيز الدورة) بلا نوى ولا
+// جواهر، فلا تنشئ تضخّمًا دائمًا ولا تتجاوز سرعة الدورة الطبيعية.
+// ---------------------------------------------------------------------------
+
+export const CYCLE_GOALS = [
+  { id: 'cyc_manual_250k', type: 'runManualMined', threshold: 250000, name: 'ربع مليون باليد', emoji: '✊', reward: { coins: 3000 } },
+  { id: 'cyc_regions_5', type: 'regionsUnlocked', threshold: 5, name: 'خمس مناطق في الدورة', emoji: '🧭', reward: { coins: 5000 } },
+  { id: 'cyc_relics_3', type: 'runRelics', threshold: 3, name: 'ثلاثة آثار في الدورة', emoji: '🏺', reward: { coins: 7000 } },
+  { id: 'cyc_pickaxe_15', type: 'pickaxe', threshold: 15, name: 'معول بمستوى 15', emoji: '⛏️', reward: { coins: 6000 } },
+  { id: 'cyc_manual_2m', type: 'runManualMined', threshold: 2000000, name: 'مليونان باليد', emoji: '💪', reward: { coins: 12000 } },
+  { id: 'cyc_regions_8', type: 'regionsUnlocked', threshold: 8, name: 'كل المناطق في الدورة', emoji: '🌌', reward: { coins: 20000 } },
+];
+
+export function cycleGoalProgress(player, type) {
+  switch (type) {
+    case 'runManualMined': return Math.floor(Number(player.runManualMined || 0));
+    case 'runMined': return Math.floor(Number(player.runMined || 0));
+    case 'regionsUnlocked': return new Set((player.regionsUnlocked || []).filter((r) => REGIONS.some((x) => x.id === r))).size;
+    case 'pickaxe': return player.equipment?.pickaxe || 1;
+    case 'workers': return player.workers || 0;
+    case 'runRelics': return Math.floor(Number(player.runRelics || 0));
+    default: return 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// أوسمة البعث — شكلية بحتة تُعرض حسب عدد مرات البعث، بلا أي قوة إضافية.
+// ---------------------------------------------------------------------------
+
+export const REBIRTH_BADGES = [
+  { rebirths: 0, id: 'seed', name: 'بذرة', emoji: '🌱' },
+  { rebirths: 1, id: 'sprout', name: 'باعث', emoji: '🌅' },
+  { rebirths: 3, id: 'veteran', name: 'باعث مخضرم', emoji: '🧬' },
+  { rebirths: 5, id: 'keeper', name: 'حارس الإرث', emoji: '🏛️' },
+  { rebirths: 10, id: 'eternal', name: 'خالد البعث', emoji: '♾️' },
+];
+
+/** الوسام الحالي بحسب عدد مرات البعث + الوسام التالي وكم بقي له. */
+export function rebirthBadge(count) {
+  const n = Math.max(0, Math.floor(Number(count) || 0));
+  let current = REBIRTH_BADGES[0];
+  let next = null;
+  for (const b of REBIRTH_BADGES) {
+    if (n >= b.rebirths) current = b;
+    else { next = b; break; }
+  }
+  return {
+    current,
+    next: next ? { ...next, remaining: next.rebirths - n } : null,
+  };
 }
 
 // ---------------------------------------------------------------------------

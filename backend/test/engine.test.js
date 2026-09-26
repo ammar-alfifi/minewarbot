@@ -6,7 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createJsonStore } from '../src/store.js';
 import { createEngine, GameError } from '../src/game/engine.js';
-import { REGIONS } from '../src/game/rules.js';
+import { REGIONS, REBIRTH } from '../src/game/rules.js';
 
 const HOUR = 3600_000;
 
@@ -67,6 +67,37 @@ test('التعدين يُحتسب مرة واحدة لكل requestId ويحدّ�
   assert.equal(group, r1.result.coins);
   const seasonMeta = await store.mutate((doc) => doc.meta.season.scores['tg_1']);
   assert.equal(seasonMeta, after.season.score, 'نقاط الموسم تُسجَّل للأرشفة الأسبوعية');
+});
+
+test('التعدين اليدوي يرفع عدّاد الدورة اليدوي، والدخل الخامل لا يرفعه', async () => {
+  const { engine, store, clock } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.equipment.pickaxe = 20;
+    p.workers = 20;
+  });
+  const before = (await engine.getState('tg_1')).player;
+  assert.equal(before.rebirth.runManualMined, 0, 'يبدأ عدّاد التعدين اليدوي من الصفر');
+
+  const m = await engine.mine('tg_1', 3, 'req_manual1');
+  assert.equal(m.result.coins, 3 * before.power.manual);
+  assert.equal(
+    m.player.rebirth.runManualMined,
+    before.rebirth.runManualMined + m.result.coins,
+    'النقر اليدوي يرفع runManualMined بمقدار ما كُسب',
+  );
+  assert.equal(
+    m.player.rebirth.runMined,
+    before.rebirth.runMined + m.result.coins,
+    'ويُحتسب كذلك في عدّاد الدورة العام',
+  );
+
+  // دخل العمّال الخامل يرفع عدّاد الدورة العام فقط، لا العدّاد اليدوي
+  clock.t += HOUR;
+  const after = (await engine.getState('tg_1')).player;
+  assert.ok(after.rebirth.runMined > m.player.rebirth.runMined, 'الدخل الخامل يرفع عدّاد الدورة');
+  assert.equal(after.rebirth.runManualMined, m.player.rebirth.runManualMined, 'الدخل الخامل لا يُحتسب تعديناً يدوياً');
 });
 
 test('التعدين يرفض اللاعب غير المسجل', async () => {
@@ -304,6 +335,47 @@ test('الدعوة تربط الصداقة وتمنح مكافآت متبادل�
   assert.equal(after.stats.friends, 1);
   const friend = await engine.getState('tg_new');
   assert.equal(friend.player.stats.friends, 1);
+});
+
+test('الدعوة تربط الصداقة حتى لو لعب الصديق من قبل (حساب قائم)', async () => {
+  const { engine } = setup();
+  // الصديق موجود مسبقاً (فتح اللعبة قبل أن يضغط رابط الدعوة)
+  const friendBefore = (await engine.session(who('tg_old', 'الصديق القديم'))).player;
+  assert.equal(friendBefore.stats.friends, 0);
+  await engine.session(who('tg_1', 'الداعي'));
+  const inviterBefore = (await engine.getState('tg_1')).player;
+
+  const guest = await engine.session(who('tg_old', 'الصديق القديم'), 'ref_tg_1');
+  assert.equal(guest.isNew, false, 'الصديق ليس جديداً — ومع ذلك يجب أن يُضاف');
+  assert.equal(guest.player.stats.friends, 1, 'الرابط يربط الصداقة للحساب القائم');
+  assert.equal(guest.player.gems, friendBefore.gems + 2, 'الصديق يكسب جواهر الترحيب مرة واحدة');
+
+  const inviterAfter = (await engine.getState('tg_1')).player;
+  assert.equal(inviterAfter.stats.friends, 1, 'الداعي يرى الصديق في رفاقه');
+  assert.equal(inviterAfter.gems, inviterBefore.gems + 3, 'الداعي يكافأ عند أول ربط');
+});
+
+test('إعادة فتح رابط الدعوة لا تكرر الربط ولا المكافأة', async () => {
+  const { engine } = setup();
+  await engine.session(who('tg_1', 'الداعي'));
+  await engine.session(who('tg_new', 'الصديق'), 'ref_tg_1');
+  const inviterFirst = (await engine.getState('tg_1')).player;
+  const friendFirst = (await engine.getState('tg_new')).player;
+
+  await engine.session(who('tg_new', 'الصديق'), 'ref_tg_1');
+  const inviterSecond = (await engine.getState('tg_1')).player;
+  const friendSecond = (await engine.getState('tg_new')).player;
+
+  assert.equal(inviterSecond.gems, inviterFirst.gems, 'لا مكافأة مكررة للداعي');
+  assert.equal(friendSecond.gems, friendFirst.gems, 'لا مكافأة مكررة للصديق');
+  assert.equal(friendSecond.stats.friends, 1, 'لا تكرار في قائمة الأصدقاء');
+});
+
+test('رابط الدعوة الذاتية لا يربط اللاعب بنفسه', async () => {
+  const { engine } = setup();
+  await engine.session(who('tg_1', 'الداعي'));
+  const self = await engine.session(who('tg_1'), 'ref_tg_1');
+  assert.equal(self.player.stats.friends, 0);
 });
 
 test('لوحة الصدارة: ثروة ومجموعة وموسم ورفاق', async () => {
@@ -595,6 +667,22 @@ test('البعث يُرفض إذا نقص التعدين اليدوي (الدخ�
   await assert.rejects(engine.rebirth('tg_1', 'req_rebrth2'), (e) => e.code === 'rebirth_not_ready');
 });
 
+test('حالة البعث تعرض عدد المناطق والعتبة القادمة من المصدر وتُحصّن شرط المناطق', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  const clean = await engine.getState('tg_1');
+  assert.equal(clean.player.rebirth.totalRegions, REGIONS.length, 'عدد المناطق من القواعد لا مثبّت في الواجهة');
+  assert.equal(clean.player.rebirth.nextThreshold, REBIRTH.baseThreshold * REBIRTH.thresholdMult, 'العتبة القادمة مضاعفة القواعد');
+
+  await store.mutate((doc) => {
+    // ثمانية عناصر لكنها منطقة واحدة مكرّرة: لا يجوز أن يمرّ شرط «كل المناطق»
+    doc.players.tg_1.regionsUnlocked = Array(REGIONS.length).fill('surface');
+  });
+  const st = await engine.getState('tg_1');
+  assert.equal(st.player.rebirth.conditions.regions, false, 'التكرار لا يستوفي شرط كل المناطق');
+  assert.equal(st.player.rebirth.cycleGoals.goals.find((g) => g.id === 'cyc_regions_8').progress, 1, 'تقدّم هدف المناطق يحسب الفريد فقط');
+});
+
 test('شجرة نوى الإرث: شراء بالأنوية بحدود المستويات', async () => {
   const { engine, store } = setup();
   await engine.session(who('tg_1'));
@@ -606,6 +694,43 @@ test('شجرة نوى الإرث: شراء بالأنوية بحدود المس�
   await engine.legacyUpgrade('tg_1', 'vein_memory', 'req_legcy2');
   await assert.rejects(engine.legacyUpgrade('tg_1', 'vein_memory', 'req_legcy3'), (e) => e.code === 'insufficient_cores');
   await assert.rejects(engine.legacyUpgrade('tg_1', 'nope', 'req_legcy4'), (e) => e.code === 'unknown_legacy_track');
+});
+
+test('أهداف الدورة: استلام مرة واحدة لكل دورة وإعادة تصفيرها مع البعث', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.runManualMined = 300000;
+    p.runRelics = 3;
+  });
+  const state = await engine.getState('tg_1');
+  const goal = state.player.rebirth.cycleGoals.goals.find((g) => g.id === 'cyc_manual_250k');
+  assert.equal(goal.claimable, true, 'الهدف متاح بعد بلوغ الشرط');
+
+  const beforeCoins = state.player.coins;
+  const claim = await engine.claimCycleGoal('tg_1', 'cyc_manual_250k', 'req_cycle01');
+  assert.ok(claim.result.reward.coins > 0);
+  assert.equal(claim.player.coins, beforeCoins + claim.result.reward.coins);
+  // المكافأة لا تحتسب تعدين دورة (كي لا تُسرّع شروط البعث)
+  assert.equal(claim.player.rebirth.runMined, 0, 'مكافأة الهدف لا تدخل عدّاد الدورة');
+
+  await assert.rejects(engine.claimCycleGoal('tg_1', 'cyc_manual_250k', 'req_cycle02'), (e) => e.code === 'already_claimed');
+  await assert.rejects(engine.claimCycleGoal('tg_1', 'nope', 'req_cycle03'), (e) => e.code === 'unknown_cycle_goal');
+  await assert.rejects(engine.claimCycleGoal('tg_1', 'cyc_regions_8', 'req_cycle04'), (e) => e.code === 'not_ready');
+
+  // البعث يُصفّر أهداف الدورة (والعدّاد) ليعيدها قابلة للمطالبة في الدورة التالية
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.equipment.pickaxe = 20; p.workers = 10;
+    p.regionsUnlocked = REGIONS.map((r) => r.id);
+    p.runMined = 50_000_000; p.runManualMined = 10_000_000;
+  });
+  const reb = await engine.rebirth('tg_1', 'req_rebrn99');
+  assert.equal(reb.player.rebirth.runRelics, 0, 'عدّاد آثار الدورة يُصفَّر');
+  const reset = reb.player.rebirth.cycleGoals.goals.find((g) => g.id === 'cyc_manual_250k');
+  assert.equal(reset.claimed, false, 'أهداف الدورة تُصفَّر مع البعث');
+  assert.equal(reb.player.rebirth.badge.rebirths, 1, 'وسام البعث يظهر عند أول دورة');
 });
 
 test('متجر التجميل: شراء بالجواهر وتجهيز بلا تكرار', async () => {

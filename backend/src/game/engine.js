@@ -14,6 +14,7 @@ import {
   MILESTONES, milestoneProgress, TITLES, GROUP_GOAL, groupChestStatus, REFERRAL,
   SEASON_REWARDS, seasonRewardFor,
   REBIRTH, rebirthThreshold, rebirthCores, rebirthConditions, qualifiesForRebirthSeed,
+  CYCLE_GOALS, cycleGoalProgress, REBIRTH_BADGES, rebirthBadge,
   LEGACY_TRACKS, LEGACY_COST, legacyRanks, COSMETICS,
   unlockedRegions, nextRegion, nextMilestone, saneNumber,
 } from './rules.js';
@@ -41,7 +42,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
   // رقم مخطط اللاعب. يُرفع عند إضافة حقول جديدة إلزامية (مثل Rebirth/الإرث/التجميل)
   // حتى تُطبَّع الحسابات القائمة من جديد — وإلا بقيت بلا الحقول الجديدة وانهىر publicState.
-  const PLAYER_SCHEMA = 3;
+  const PLAYER_SCHEMA = 4;
 
   function playerOf(doc, id) {
     const p = doc.players[id];
@@ -86,6 +87,11 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.rebirthCount = saneNumber(p.rebirthCount, 0, 1e6);
     p.runMined = saneNumber(p.runMined, 0, 1e15);
     p.runManualMined = saneNumber(p.runManualMined, 0, 1e15);
+    // عدّاد آثار الدورة (لأهداف الدورة) — يُصفَّر مع البعث.
+    p.runRelics = saneNumber(p.runRelics, 0, 1e6);
+    p.cycleGoalsClaimed = Array.isArray(p.cycleGoalsClaimed)
+      ? p.cycleGoalsClaimed.filter((g) => CYCLE_GOALS.some((x) => x.id === g))
+      : [];
     p.legacyCores = saneNumber(p.legacyCores, 0, 1e6);
     p.rebirthSeeded = Boolean(p.rebirthSeeded);
     const leg = p.legacy || {};
@@ -127,9 +133,13 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         firstAt: saneNumber(entry && entry.firstAt, ts, 1e15) || ts,
       };
     }
-    p.regionsUnlocked = Array.isArray(p.regionsUnlocked) && p.regionsUnlocked.length
-      ? p.regionsUnlocked.filter((r) => REGIONS.some((x) => x.id === r))
-      // المناطق تتتبع تقدّم الدورة (runMined)، مع احتياط lifetime للحسابات القديمة جداً
+    // المناطق تتتبع تقدّم الدورة (runMined)، مع احتياط lifetime للحسابات القديمة جداً.
+    // نُنقّي المعرفات المكرّرة/غير الصالحة حتى لا يخدع العدّاد شرطَ «كل المناطق».
+    const storedRegions = Array.isArray(p.regionsUnlocked)
+      ? [...new Set(p.regionsUnlocked.filter((r) => REGIONS.some((x) => x.id === r)))]
+      : [];
+    p.regionsUnlocked = storedRegions.length
+      ? storedRegions
       : unlockedRegions(hadRebirthField ? p.runMined : p.lifetime.totalMined);
     p.title = TITLES.some((t) => t.id === p.title) ? p.title : 'novice';
     if (!p.lifetime.titles.includes(p.title)) p.lifetime.titles.push(p.title);
@@ -378,6 +388,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     if (!def) return null;
     const existing = p.relics[relicId];
     p.lastRelicAt = ts;
+    p.runRelics = Math.min(1e6, (p.runRelics || 0) + 1);
     if (existing) {
       existing.count += 1;
       const dupeGems = RARITIES[def.rarity].dupeGems;
@@ -488,6 +499,20 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         claimable: !done.has(m.id) && progress >= m.threshold,
         claimed: done.has(m.id),
         reward: m.reward,
+      };
+    });
+  }
+
+  function cycleGoalState(p) {
+    const done = new Set(p.cycleGoalsClaimed || []);
+    return CYCLE_GOALS.map((g) => {
+      const progress = cycleGoalProgress(p, g.type);
+      return {
+        id: g.id, name: g.name, emoji: g.emoji, type: g.type, threshold: g.threshold,
+        progress: Math.min(progress, g.threshold),
+        claimable: !done.has(g.id) && progress >= g.threshold,
+        claimed: done.has(g.id),
+        reward: g.reward,
       };
     });
   }
@@ -621,20 +646,33 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       lastSeason: p.lastSeason,
       rebirth: (() => {
         const st = rebirthConditions(p);
+        const badge = rebirthBadge(p.rebirthCount);
+        const goals = cycleGoalState(p);
         return {
           name: REBIRTH.name, emoji: REBIRTH.emoji,
           count: p.rebirthCount,
           threshold: st.threshold,
           runMined: p.runMined,
           runManualMined: p.runManualMined,
+          runRelics: p.runRelics,
           manualThreshold: REBIRTH.manualThreshold,
           minPickaxe: REBIRTH.minPickaxe,
           minWorkers: REBIRTH.minWorkers,
+          totalRegions: REGIONS.length,
+          nextThreshold: rebirthThreshold((p.rebirthCount || 0) + 1),
           conditions: st.conditions,
           eligible: st.eligible,
           cores: st.cores,
           maxCores: REBIRTH.maxCores,
           seeded: p.rebirthSeeded,
+          badge: badge.current,
+          nextBadge: badge.next,
+          cycleGoals: {
+            total: goals.length,
+            claimed: goals.filter((g) => g.claimed).length,
+            allClaimed: goals.every((g) => g.claimed),
+            goals,
+          },
           keepNote: REBIRTH.keepNote,
           resetNote: REBIRTH.resetNote,
         };
@@ -758,21 +796,29 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         p.mode = identity.mode;
       }
 
-      // إحالة صديق: تربط الصداقة وتمنح مكافأة متبادلة (بسقف يومي)
-      if (isNew && startParam) {
+      // إحالة صديق: تربط الصداقة وتمنح مكافأة متبادلة (بسقف يومي).
+      // نربط الصداقة حتى للحسابات القائمة وليس للجديد فقط: كثير من اللاعبين يفتحون
+      // اللعبة أولاً ثم يدخلون من رابط الدعوة، وكان الربط يُشترط به isNew فيفشل دائماً.
+      // الربط والمكافأة يتمّان مرة واحدة لكل زوج (referredBy)، وبدون إحالة ذاتية.
+      if (startParam) {
         const referrerId = parseReferral(startParam);
         const referrer = referrerId && referrerId !== p.playerId ? playerOf(doc, referrerId) : null;
-        if (referrer) {
+        const alreadyLinked = referrer ? p.friends.includes(referrer.playerId) : false;
+        const freeToLink = !p.referredBy || p.referredBy === referrer?.playerId;
+        if (referrer && !alreadyLinked && freeToLink) {
           linkFriends(referrer, p);
-          if (referrer.inviteGems.day !== dayId(ts)) referrer.inviteGems = { day: dayId(ts), gems: 0 };
-          const reward = Math.min(REFERRAL.inviterGems, REFERRAL.dailyCapGems - referrer.inviteGems.gems);
-          if (reward > 0) {
-            referrer.inviteGems.gems += reward;
-            addGems(doc, referrer, reward, { ts, season: false });
-            pushNotice(referrer, 'invite_reward', { gems: reward, name: p.name }, ts);
+          // المكافآت مرة واحدة فقط عند أول ربط حقيقي (لا تتكرر بإعادة فتح الرابط).
+          if (!p.referredBy) {
+            if (referrer.inviteGems.day !== dayId(ts)) referrer.inviteGems = { day: dayId(ts), gems: 0 };
+            const reward = Math.min(REFERRAL.inviterGems, REFERRAL.dailyCapGems - referrer.inviteGems.gems);
+            if (reward > 0) {
+              referrer.inviteGems.gems += reward;
+              addGems(doc, referrer, reward, { ts, season: false });
+              pushNotice(referrer, 'invite_reward', { gems: reward, name: p.name }, ts);
+            }
+            p.referredBy = referrer.playerId;
+            addGems(doc, p, REFERRAL.inviteeGems, { ts, season: false });
           }
-          p.referredBy = referrer.playerId;
-          addGems(doc, p, REFERRAL.inviteeGems, { ts, season: false });
         }
       }
 
@@ -828,7 +874,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       const power = powerOf(p, ts);
       const chances = findChances(p, ts);
       const coins = Math.floor(power.manual * count);
-      addCoins(doc, p, coins, ts, { mined: true });
+      // التعدين النقر/اليدوي النشط: يُحتسب في عدّاد الدورة اليدوي (شرط البعث).
+      addCoins(doc, p, coins, ts, { mined: true, manual: true });
 
       let gemResult = null;
       let relicResult = null;
@@ -1151,6 +1198,36 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   }
 
   // -------------------------------------------------------------------------
+  // أهداف الدورة: تُطالَب مرة واحدة لكل دورة وتُصفَّر مع البعث
+  // -------------------------------------------------------------------------
+
+  async function claimCycleGoal(playerId, goalId, requestId = null) {
+    const ts = now();
+    return store.mutate((doc) => {
+      const p = playerOf(doc, playerId);
+      if (!p) fail('لاعب غير معروف', 401, 'unknown_player');
+      touch(doc, p, ts);
+
+      const cached = replay(p, requestId, `cycle:${goalId}`, ts);
+      if (cached) return { result: cached, player: publicState(doc, p, ts), replayed: true };
+
+      const def = CYCLE_GOALS.find((g) => g.id === goalId);
+      if (!def) fail('هدف دورة غير معروف', 400, 'unknown_cycle_goal');
+      if ((p.cycleGoalsClaimed || []).includes(def.id)) fail('استلمت هذا الهدف في هذه الدورة', 400, 'already_claimed');
+      if (cycleGoalProgress(p, def.type) < def.threshold) fail('لم تصل لهذا الهدف بعد', 400, 'not_ready');
+
+      p.cycleGoalsClaimed.push(def.id);
+      const result = { goalId: def.id, reward: {} };
+      // مكافأة عملات فقط بلا احتساب تعدين/موسم/جماعة حتى لا تُسرّع شروط البعث.
+      if (def.reward.coins) result.reward.coins = addCoins(doc, p, def.reward.coins, ts, { mined: false });
+      if (def.reward.gems) result.reward.gems = addGems(doc, p, def.reward.gems, { ts, season: false });
+
+      remember(p, requestId, `cycle:${def.id}`, result, ts);
+      return { result, player: publicState(doc, p, ts) };
+    });
+  }
+
+  // -------------------------------------------------------------------------
   // المنطقة والألقاب
   // -------------------------------------------------------------------------
 
@@ -1228,6 +1305,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       p.regionsUnlocked = [REGIONS[0].id];
       p.runMined = 0;
       p.runManualMined = 0;
+      p.runRelics = 0;
+      p.cycleGoalsClaimed = [];
       p.rebirthCount = saneNumber(p.rebirthCount, 0, 1e6) + 1;
       p.legacyCores = saneNumber(p.legacyCores, 0, 1e6) + cores;
       p.lastTick = ts;
@@ -1503,7 +1582,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
   return {
     session, getState, mine, upgrade, raid, dailyDig, claim, switchRegion, setTitle,
-    rebirth, legacyUpgrade, buyCosmetic,
+    rebirth, legacyUpgrade, buyCosmetic, claimCycleGoal,
     leaderboard, raidLog, invite, clearNotices, completeTutorial, catalog, stats,
     sessionValid, logout,
     // للاختبارات فقط:

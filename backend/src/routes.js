@@ -233,6 +233,13 @@ export function createApiRoutes({ engine, config }) {
     return engine.buyCosmetic(identity.playerId, str(req.body?.cosmeticId, 32), requestId);
   }));
 
+  router.post('/actions/cycle-goal', safe(async (req) => {
+    const { identity } = await requireIdentity(req);
+    const requestId = requestIdOf(req.body);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.claimCycleGoal(identity.playerId, str(req.body?.goalId, 32), requestId);
+  }));
+
   router.post('/actions/notices', safe(async (req) => {
     const { identity } = await requireIdentity(req);
     if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');

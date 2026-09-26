@@ -22,3 +22,6 @@ backend/data/*.db-shm
 .wrangler/
 .dev.vars
 
+# حالة أدوات التحرير المحلية
+.opencode/
+

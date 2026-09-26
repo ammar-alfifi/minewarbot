@@ -358,6 +358,13 @@ async function handleApi(request, env, ctx, url) {
     });
   }
 
+  if (pathname === '/api/actions/cycle-goal' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.claimCycleGoal(identity.playerId, str(body?.goalId, 32), requestIdOf(body));
+    });
+  }
+
   if (pathname === '/api/actions/notices' && method === 'POST') {
     return run(async () => {
       const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
