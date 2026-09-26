@@ -13,7 +13,7 @@ import {
   DAILY, VISIT_REWARDS, visitStreakAfter, VISIT_REPEAT, visitDayReward,
   MILESTONES, milestoneProgress, TITLES, GROUP_GOAL, groupChestStatus, REFERRAL,
   SEASON_REWARDS, seasonRewardFor,
-  REBIRTH, rebirthThreshold, rebirthCores, rebirthConditions, qualifiesForRebirthSeed,
+  REBIRTH, rebirthThreshold, rebirthCores, rebirthConditions, qualifiesForRebirthSeed, RUN_MINED_CAP, seedManualMined,
   CYCLE_GOALS, cycleGoalProgress, REBIRTH_BADGES, rebirthBadge,
   LEGACY_TRACKS, LEGACY_COST, legacyRanks, COSMETICS,
   unlockedRegions, nextRegion, nextMilestone, saneNumber,
@@ -87,8 +87,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.workers = saneNumber(p.workers, 0, WORKER.maxCount);
     // عدّادات دورة البعث (Rebirth) وشجرة الإرث الدائمة
     p.rebirthCount = saneNumber(p.rebirthCount, 0, 1e6);
-    p.runMined = saneNumber(p.runMined, 0, 1e15);
-    p.runManualMined = saneNumber(p.runManualMined, 0, 1e15);
+    p.runMined = saneNumber(p.runMined, 0, RUN_MINED_CAP);
+    p.runManualMined = saneNumber(p.runManualMined, 0, RUN_MINED_CAP);
     // عدّاد آثار الدورة (لأهداف الدورة) — يُصفَّر مع البعث.
     p.runRelics = saneNumber(p.runRelics, 0, 1e6);
     p.cycleGoalsClaimed = Array.isArray(p.cycleGoalsClaimed)
@@ -160,7 +160,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     // يحصل على أهلية بعث أولى مكافئة (نعترف بالجهد السابق دون ادّعاء سجل يدوي وهمي).
     if (!hadRebirthField && qualifiesForRebirthSeed(p)) {
       p.runMined = Math.min(p.lifetime.totalMined, rebirthThreshold(0));
-      p.runManualMined = REBIRTH.manualThreshold;
+      p.runManualMined = seedManualMined();
       p.rebirthSeeded = true;
     }
     p.milestonesClaimed = Array.isArray(p.milestonesClaimed) ? p.milestonesClaimed.filter((m) => MILESTONES.some((x) => x.id === m)) : [];
@@ -352,6 +352,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
   function addSeason(doc, p, points, ts) {
     if (!points) return;
+    // لاعب عائد بعد غياب: نسخة أسبوعه قديمة، فنبدأ أسبوعه عند أول نقاط جديدة
+    // حتى لا تضيع نقاطه في الترتيب ولا تختلط بنقاط موسم سابق.
+    const wk = weekId(ts);
+    if (p.season.weekId !== wk) p.season = { weekId: wk, score: 0 };
     p.season.score += points;
     const meta = ensureMeta(doc, ts);
     meta.season.scores[p.playerId] = p.season.score;
@@ -364,8 +368,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     if (mined) {
       p.lifetime.totalMined += value;
       // عدّاد الدورة: يفتح المناطق ويؤهّل للبعث. التعدين اليدوي يُحتسب منفصلاً.
-      p.runMined = Math.min(1e15, (p.runMined || 0) + value);
-      if (manual) p.runManualMined = Math.min(1e15, (p.runManualMined || 0) + value);
+      p.runMined = Math.min(RUN_MINED_CAP, (p.runMined || 0) + value);
+      if (manual) p.runManualMined = Math.min(RUN_MINED_CAP, (p.runManualMined || 0) + value);
       if (season) addSeason(doc, p, value, ts);
       if (group) {
         const meta = ensureMeta(doc, ts);
@@ -642,7 +646,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       milestones: milestoneStatus(p),
       season: {
         weekId: weekId(ts), score: p.season.score,
-        endsAt: (p.season.weekId + 1) * 7 * 24 * 3600 * 1000,
+        endsAt: (weekId(ts) + 1) * 7 * 24 * 3600 * 1000,
         rewards: SEASON_REWARDS,
       },
       lastSeason: p.lastSeason,
@@ -657,7 +661,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
           runMined: p.runMined,
           runManualMined: p.runManualMined,
           runRelics: p.runRelics,
-          manualThreshold: REBIRTH.manualThreshold,
+          manualThreshold: st.manualThreshold,
+          manualBaseThreshold: REBIRTH.manualThreshold,
+          manualShare: REBIRTH.manualShare,
           minPickaxe: REBIRTH.minPickaxe,
           minWorkers: REBIRTH.minWorkers,
           totalRegions: REGIONS.length,
@@ -758,6 +764,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       rebirthRules: {
         name: REBIRTH.name, emoji: REBIRTH.emoji,
         baseThreshold: REBIRTH.baseThreshold, manualThreshold: REBIRTH.manualThreshold,
+        manualShare: REBIRTH.manualShare,
         thresholdMult: REBIRTH.thresholdMult, minPickaxe: REBIRTH.minPickaxe,
         minWorkers: REBIRTH.minWorkers, maxCores: REBIRTH.maxCores,
         keepNote: REBIRTH.keepNote, resetNote: REBIRTH.resetNote,
@@ -1389,6 +1396,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       relics: Object.keys(p.relics).length,
       shieldUntil: p.shieldUntil,
       manualPower: Math.floor(powerOf(p, ts).manual),
+      rebirths: p.rebirthCount || 0,
+      badge: rebirthBadge(p.rebirthCount || 0).current,
       isMe: p.playerId === viewerId,
       isFriend: viewerFriends.has(p.playerId),
       protected: p.lifetime.totalMined < RAID.newPlayerProtectionMined,
@@ -1448,6 +1457,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       }
 
       let scoreOf;
+      // النقاط تُحتسب فقط لمن نسخته تطابق الأسبوع الحالي (اللاعبون العائدون يبدأ موسمهم عند أول كسب).
       if (scope === 'season') scoreOf = (p) => (p.season.weekId === weekId(ts) ? p.season.score : 0);
       else if (scope === 'collection') scoreOf = (p) => collectionScore(p);
       else scoreOf = (p) => Math.floor(p.coins + p.gems * 250);

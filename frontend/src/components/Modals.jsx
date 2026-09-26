@@ -213,8 +213,8 @@ export default function Modals({ game, catalog, onStartTour }) {
                 <div className="desc">{unlocked ? region.tagline : `${t('mine.locked')} — ${t('mine.unlockAt')} ${short(region.unlockTotalMined)} 🪙`}</div>
                 {region.specialty && (
                   <div className="small muted mt8">
-                    🎯 {region.specialty.specialty?.label} +{Math.round(region.specialty.specialty.value * 100)}%
-                    {region.specialty.special ? ` · ⭐ ${region.specialty.special.label} +${Math.round(region.specialty.special.value * 100)}%` : ''}
+                    🎯 {t('regionBonus.' + region.specialty.specialty?.key)} +{Math.round(region.specialty.specialty.value * 100)}%
+                    {region.specialty.special ? ` · ⭐ ${t('regionBonus.' + region.specialty.special.key)} +${Math.round(region.specialty.special.value * 100)}%` : ''}
                   </div>
                 )}
                 <div className="small muted mt8">آثار: {region.relics.map((id) => catalog.relics.find((r) => r.id === id)?.emoji).join(' ')}</div>

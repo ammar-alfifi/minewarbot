@@ -8,7 +8,7 @@ import {
   unlockedRegions, offlineCapHours, REGIONS, RELICS, RARITIES, RAID,
   rebirthThreshold, rebirthCores, rebirthConditions, legacyBonus, groupChestStatus,
   seasonRewardFor, regionOutputBonus, legacyRanks, SEASON_REWARDS, GROUP_GOAL, REBIRTH,
-  cycleGoalProgress, CYCLE_GOALS, rebirthBadge, REBIRTH_BADGES,
+  cycleGoalProgress, CYCLE_GOALS, rebirthBadge, REBIRTH_BADGES, manualRequirement, RUN_MINED_CAP,
 } from '../src/game/rules.js';
 
 const basePlayer = (over = {}) => ({
@@ -139,14 +139,26 @@ test('مكافأة اليوم السابع: جواهر مرة كل أسبوع، 
   assert.equal(weekly.reward.gems, 5);
 });
 
-test('عتبات البعث تتصاعد ×5 ومكافأة النوى عند 1× و5× و25×', () => {
+test('عتبات البعث تتصاعد ×3 ومكافأة النوى عند 1× و2× و4×', () => {
   assert.equal(rebirthThreshold(0), REBIRTH.baseThreshold);
-  assert.equal(rebirthThreshold(1), REBIRTH.baseThreshold * 5);
+  assert.equal(rebirthThreshold(1), REBIRTH.baseThreshold * REBIRTH.thresholdMult);
   assert.equal(rebirthCores(0, 100), 0);
   assert.equal(rebirthCores(100, 100), 1);
-  assert.equal(rebirthCores(500, 100), 2);
-  assert.equal(rebirthCores(2500, 100), 3);
+  assert.equal(rebirthCores(200, 100), 2);
+  assert.equal(rebirthCores(400, 100), 3);
   assert.equal(rebirthCores(999999, 100), 3, 'سقف المكافأة 3 نوى');
+});
+
+test('شرط التعدين اليدوي يبقى نسبة من العتبة ويحافظ على الحد الأدنى المطلق', () => {
+  assert.equal(manualRequirement(rebirthThreshold(0)), REBIRTH.manualThreshold, 'الدورة الأولى عند الحد الأدنى المطلق');
+  assert.equal(manualRequirement(rebirthThreshold(1)), Math.floor(rebirthThreshold(1) * REBIRTH.manualShare));
+  // النسبة لا تنخفض مهما تصاعدت العتبة
+  for (let c = 0; c < 8; c++) {
+    const th = rebirthThreshold(c);
+    assert.ok(manualRequirement(th) >= Math.floor(th * REBIRTH.manualShare));
+  }
+  // أقصى عتبة ممكنة داخل سقف العدّاد، ومكافأة النوى الثلاث متاحة عند 4×
+  assert.ok(rebirthThreshold(10) * 4 <= RUN_MINED_CAP, 'دورة 11 وما بعدها: النوى الثلاث قابلة للتحقيق');
 });
 
 test('شروط البعث تجمع المناطق والتعدين اليدوي والمعدات', () => {
