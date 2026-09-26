@@ -23,5 +23,7 @@ backend/data/*.db-shm
 .dev.vars
 
 # حالة أدوات التحرير المحلية
-.opencode/
+# نستثني أوامر الفريق لتبقى مشتركة بين الأعضاء، ونُبقي بقية الحالة محلية
+.opencode/*
+!.opencode/commands/
 
