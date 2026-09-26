@@ -378,6 +378,42 @@ test('مكافآت الهدف الجماعي تُطالب حسب المساهم�
   assert.equal(again.result.reward.gems, 2);
 });
 
+test('حساب قديم بمخطط __v سابق يُطبَّع بالحقول الجديدة ولا ينهار', async () => {
+  // حساب مخزّن بـ __v=2 (قبل إضافة Rebirth/الإرث/التجميل) — كان publicState ينهار عليه.
+  const legacy = {
+    tg_old: {
+      __v: 2, playerId: 'tg_old', name: 'قديم', mode: 'telegram',
+      coins: 5000, gems: 7, workers: 3, regionId: 'coal',
+      equipment: { pickaxe: 5, lamp: 2, helmet: 1 },
+      facilities: { cart: 2, smelter: 1, storage: 2 },
+      lifetime: { totalMined: 20000, totalGems: 7, relicsFound: 0, raidsWon: 0, raidsLost: 0, raidsDefended: 0, bestStreak: 1, daysVisited: 1, seasonWins: 0, titles: ['novice'] },
+      regionsUnlocked: ['surface', 'coal'],
+      relics: {}, title: 'novice',
+      dailyAt: 0, visitAt: 0, visitStreak: 0,
+      milestonesClaimed: [], groupClaims: { weekId: 0, ids: [] }, groupChestWeek: -1,
+      incoming: [], outgoing: [], raid: { lastAt: 0, attemptsToday: 0, day: 0, targets: {} },
+      inviteGems: { day: 0, gems: 0 }, season: { weekId: 0, score: 0 }, notices: [], actionLog: [],
+    },
+  };
+  const { engine } = setup({ seedFile: legacy });
+  const s = await engine.session(who('tg_old', 'قديم'));
+  assert.equal(s.isNew, false, 'لم يُعد إنشاء اللاعب');
+  // الحقول الجديدة موجودة (تم التطبيع بلا فقدان التقدم)
+  assert.ok(s.player.rebirth, 'بيانات البعث متاحة');
+  assert.ok(Array.isArray(s.player.legacy.tracks), 'شجرة الإرث متاحة');
+  assert.ok(Array.isArray(s.player.cosmetics.shop), 'متجر التجميل متاح');
+  assert.ok(s.player.cosmetics.owned.length === 0, 'لا زينة مملوكة');
+  assert.ok(s.player.region.specialty, 'تخصص المنطقة متاح');
+  // التقدم القديم محفوظ
+  assert.equal(s.player.coins >= 5000, true);
+  assert.equal(s.player.gems, 7);
+  assert.equal(s.player.workers, 3);
+  assert.equal(s.player.stats.totalMined, 20000);
+  // ونظل قادرين على التعدين بعده
+  const m = await engine.mine('tg_old', 1, 'req_legacy_old1');
+  assert.ok(m.result.coins > 0);
+});
+
 test('ترحيل بيانات النسخة القديمة (gold/pickaxe) دون فقدان التقدم', async () => {
   const legacy = {
     u1: { playerId: 'u1', name: 'عمار', gold: 530, gems: 3, pickaxe: 2, workers: 1, totalMined: 500, updatedAt: 1_700_000_000_000 },

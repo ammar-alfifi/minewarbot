@@ -39,10 +39,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
   // تطبيع اللاعبين والترحيل من التخزين القديم
   // -------------------------------------------------------------------------
 
+  // رقم مخطط اللاعب. يُرفع عند إضافة حقول جديدة إلزامية (مثل Rebirth/الإرث/التجميل)
+  // حتى تُطبَّع الحسابات القائمة من جديد — وإلا بقيت بلا الحقول الجديدة وانهىر publicState.
+  const PLAYER_SCHEMA = 3;
+
   function playerOf(doc, id) {
     const p = doc.players[id];
     if (!p) return null;
-    if (p.__v === 2 && p.playerId === id) return p;
+    if (p.__v === PLAYER_SCHEMA && p.playerId === id) return p;
     return normalizePlayer(p, id);
   }
 
@@ -51,7 +55,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     const life = p.lifetime || {};
     // هل هذه أول مرة يُطبَّع فيها الحساب بعد إطلاق نظام البعث؟
     const hadRebirthField = p.rebirthCount !== undefined;
-    p.__v = 2;
+    p.__v = PLAYER_SCHEMA;
     p.playerId = id;
     p.name = String(p.name || 'منقّب').slice(0, 30);
     p.photoUrl = typeof p.photoUrl === 'string' ? p.photoUrl : null;
@@ -649,8 +653,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         };
       })(),
       cosmetics: {
-        owned: [...p.cosmetics.owned],
-        equipped: { ...p.cosmetics.equipped },
+        // حماية صريحة: حساب قادم بمخطط قديم لا يُسقط الرد (بدل 500 غير مفهوم).
+        owned: [...(p.cosmetics?.owned || [])],
+        equipped: { ...(p.cosmetics?.equipped || {}) },
         shop: COSMETICS.map((c) => ({
           id: c.id, type: c.type, name: c.name, emoji: c.emoji, cost: c.cost, desc: c.desc,
           owned: p.cosmetics.owned.includes(c.id),
