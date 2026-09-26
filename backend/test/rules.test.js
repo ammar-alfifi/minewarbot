@@ -9,6 +9,7 @@ import {
   rebirthThreshold, rebirthCores, rebirthConditions, legacyBonus, groupChestStatus,
   seasonRewardFor, regionOutputBonus, legacyRanks, SEASON_REWARDS, GROUP_GOAL, REBIRTH,
   cycleGoalProgress, CYCLE_GOALS, rebirthBadge, REBIRTH_BADGES, manualRequirement, RUN_MINED_CAP,
+  rebirthHeadStart,
 } from '../src/game/rules.js';
 
 const basePlayer = (over = {}) => ({
@@ -216,8 +217,8 @@ test('شجرة الإرث دائمة ومحدودة بالمستويات الم�
   assert.equal(none.manualMult, 1);
   assert.equal(none.offlineHours, 0);
   const maxed = legacyBonus({ legacy: { vein_memory: 4, digger_hand: 4, lineage_vault: 2 } });
-  assert.ok(Math.abs(maxed.coinMult - 1.2) < 1e-9);
-  assert.ok(Math.abs(maxed.manualMult - 1.2) < 1e-9);
+  assert.ok(Math.abs(maxed.coinMult - 1.32) < 1e-9);
+  assert.ok(Math.abs(maxed.manualMult - 1.32) < 1e-9);
   assert.equal(maxed.offlineHours, 2);
   // القيم الزائدة تُقصّ عند الحد
   assert.deepEqual(legacyRanks({ legacy: { vein_memory: 99, digger_hand: 99, lineage_vault: 99 } }), { vein_memory: 4, digger_hand: 4, lineage_vault: 2 });
@@ -239,6 +240,19 @@ test('أهداف الدورة تعتمد تقدّم الدورة فقط ولا �
     assert.ok(!g.reward.gems, `${g.id} يجب ألا يمنح جواهر`);
     assert.ok(g.reward.coins > 0, `${g.id} يحتاج مكافأة عملات`);
   }
+});
+
+test('بداية الدورة الجديدة تتدرّج مع عدد البعثات وتُسقَف بنصف شروط البعث', () => {
+  // أول بعث: معول 2 وعامل واحد (لا صفر تام).
+  assert.deepEqual(rebirthHeadStart(0), { pickaxe: 1, workers: 0 });
+  assert.deepEqual(rebirthHeadStart(1), { pickaxe: 2, workers: 1 });
+  // السقف = نصف شروط البعث (معول 10 وعمّال 5) فلا يتجاوزها مهما كثر البعث.
+  assert.deepEqual(rebirthHeadStart(9), { pickaxe: REBIRTH.headStart.maxPickaxe, workers: 5 });
+  assert.equal(rebirthHeadStart(99).pickaxe, REBIRTH.headStart.maxPickaxe);
+  assert.equal(rebirthHeadStart(99).workers, REBIRTH.headStart.maxWorkers);
+  // لا تتجاوز شروط البعث الأدنى (تُبقي للاعب شيئًا يبنيه).
+  assert.ok(rebirthHeadStart(99).pickaxe <= REBIRTH.minPickaxe);
+  assert.ok(rebirthHeadStart(99).workers <= REBIRTH.minWorkers);
 });
 
 test('أوسمة البعث تصعد مع عدد الدورات وتُسقِف عند الأعلى', () => {

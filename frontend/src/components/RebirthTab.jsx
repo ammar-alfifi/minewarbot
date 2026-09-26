@@ -102,6 +102,11 @@ export default function RebirthTab({ game }) {
             <div className="card tight mt12" style={{ textAlign: 'center' }}>
               <div className="small">{t('rebirth.cores')}: <b>{rb.cores} ✨</b></div>
               <div className="small muted mt8">{t('rebirth.nextThreshold', { n: short(rb.nextThreshold) })}</div>
+              {rb.headStart && (
+                <div className="small muted mt4">
+                  🌅 {t('rebirth.headStart', { pickaxe: num(rb.headStart.pickaxe), workers: num(rb.headStart.workers) })}
+                </div>
+              )}
             </div>
             <button className="btn primary big mt8" disabled={busy} onClick={() => setModal({ type: 'rebirth' })}>
               ✨ {t('rebirth.doRebirth')}

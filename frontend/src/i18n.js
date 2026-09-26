@@ -250,6 +250,7 @@ const ar = {
     remainingPickaxe: 'مستويات معول متبقية: {n}',
     remainingWorkers: 'عمّال متبقون: {n}',
     nextThreshold: 'عتبة ما بعد البعث: {n}',
+    headStart: 'الدورة القادمة تبدأ بمعول مستوى {pickaxe} و{workers} عمّال.',
     cycleGoalsTitle: 'أهداف الدورة',
     cycleGoalsHint: 'أهداف اختيارية تُصفَّر مع كل بعث، ومكافأتها عملات مؤقتة بلا قوة دائمة.',
     cycleGoalsProgress: '{done}/{total} مُنجَز',
