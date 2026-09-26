@@ -166,6 +166,7 @@ export default function Modals({ game, catalog, onStartTour }) {
 
   if (modal.type === 'rebirth') {
     const rb = player.rebirth;
+    if (!rb) return null; // حماية: حالة قديمة مخبّأة بلا بيانات بعث لا تُسقط التطبيق
     const onGo = async () => {
       close();
       const res = await actions.rebirth();
