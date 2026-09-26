@@ -25,6 +25,11 @@ async function giveCoins(store, playerId, coins) {
   await store.mutate((doc) => { doc.players[playerId].coins = coins; });
 }
 
+// رفع مجموع التعدين فوق عتبة حماية المبتدئين حتى تصبح الغارات مسموحة
+async function giveMined(store, playerId, mined = 20000) {
+  await store.mutate((doc) => { doc.players[playerId].lifetime.totalMined = mined; });
+}
+
 test('الجلسة تنشئ لاعباً بمنحة ترحيب ومكافأة أول زيارة', async () => {
   const { engine } = setup();
   const s = await engine.session(who('tg_1', 'أحمد'));
@@ -101,17 +106,20 @@ test('شراء الحماسة بالجواهر فقط ويتراكم الوقت'
   assert.equal(r2.player.power.boostActive, true);
 });
 
-test('الغارة: سقف، درع، إعادة غارة، وثأر', async () => {
+test('الغارة: غنيمة نسبية، درع، إعادة غارة، وثأر', async () => {
   const { engine, store, clock } = setup({ rng: () => 0.01 });
   await engine.session(who('tg_1', 'المهاجم'));
   await engine.session(who('tg_2', 'الضحية'));
+  await giveMined(store, 'tg_1');
+  await giveMined(store, 'tg_2');
   await giveCoins(store, 'tg_1', 1000);
   await giveCoins(store, 'tg_2', 10000);
 
   const raid = await engine.raid('tg_1', 'tg_2', 'req_raid_01');
   assert.equal(raid.result.success, true);
-  assert.equal(raid.result.stolen, 100, 'السقف: 100 + 40*فهرس المنطقة');
-  assert.equal(raid.player.coins, 1100);
+  assert.equal(raid.result.stolen, 1200, '12% من مخزون الضحية (بحدّ سقفَي الإنتاج)');
+  assert.equal(raid.player.coins, 2200);
+  assert.equal((await engine.getState('tg_2')).player.coins, 8800, 'لم تُكسر أرضية المخزن المحمي');
 
   await assert.rejects(
     engine.raid('tg_1', 'tg_2', 'req_raid_02'),
@@ -125,31 +133,71 @@ test('الغارة: سقف، درع، إعادة غارة، وثأر', async () 
 
   const revenge = await engine.raid('tg_2', 'tg_1', 'req_rev__01', { revenge: true });
   assert.equal(revenge.result.success, true);
-  assert.equal(revenge.result.stolen, 68, 'الثأر يأخذ 125% من النسبة');
+  assert.equal(revenge.result.stolen, 330, 'الثأر يأخذ 125% من نسبة مخزون المهاجم');
   const logAfter = await engine.raidLog('tg_2');
   assert.equal(logAfter.incoming[0].canRevenge, false);
   assert.equal(logAfter.outgoing[0].revenge, true);
 });
 
+test('الغارة: الفشل يخسّر المهاجم ويعوّض الضحية', async () => {
+  const { engine, store } = setup({ rng: () => 0.99 }); // فشل دائم
+  await engine.session(who('tg_1'));
+  await engine.session(who('tg_2'));
+  await giveMined(store, 'tg_1');
+  await giveMined(store, 'tg_2');
+  await giveCoins(store, 'tg_1', 1000);
+  await giveCoins(store, 'tg_2', 10000);
+
+  const r = await engine.raid('tg_1', 'tg_2', 'req_fail_01');
+  assert.equal(r.result.success, false);
+  assert.ok(r.result.lost > 0, 'المهاجم خسر من مخزونه');
+  assert.equal(r.player.coins, 1000 - r.result.lost);
+  assert.equal(r.result.defenseReward, Math.floor(r.result.lost * 0.6), '٦٠٪ تعويض للضحية');
+  const victim = await engine.getState('tg_2');
+  assert.equal(victim.player.coins, 10000 + r.result.defenseReward, 'الضحية كسبت تعويض دفاع');
+});
+
+test('حماية المبتدئين: لا غارات تحت عتبة التعدين', async () => {
+  const { engine, store } = setup({ rng: () => 0.01 });
+  await engine.session(who('tg_new'));
+  await engine.session(who('tg_old'));
+  await giveMined(store, 'tg_old');
+  await giveCoins(store, 'tg_new', 5000);
+  await giveCoins(store, 'tg_old', 5000);
+
+  await assert.rejects(
+    engine.raid('tg_new', 'tg_old', 'req_prot_01'),
+    (e) => e instanceof GameError && e.code === 'attacker_protected',
+    'الجديد لا يهاجم',
+  );
+  await assert.rejects(
+    engine.raid('tg_old', 'tg_new', 'req_prot_02'),
+    (e) => e instanceof GameError && e.code === 'target_protected',
+    'الجديد لا يُهاجَم',
+  );
+});
+
 test('حد الغارات اليومية يحمي الاقتصاد', async () => {
   const { engine, store, clock } = setup({ rng: () => 0.01 });
   await engine.session(who('tg_att'));
+  await giveMined(store, 'tg_att');
   await giveCoins(store, 'tg_att', 0);
-  for (let i = 0; i < 6; i++) {
+  for (let i = 0; i < 9; i++) {
     const id = `tg_vic${i}`;
     await engine.session(who(id));
+    await giveMined(store, id);
     await giveCoins(store, id, 5000);
   }
-  await giveCoins(store, 'tg_att', 0);
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 8; i++) {
     clock.t += 11 * 60 * 1000; // تجاوز مهلة الغارة
     const r = await engine.raid('tg_att', `tg_vic${i}`, `req_daily${i}a`);
     assert.equal(r.result.success, true, `غارة ${i} يجب أن تنجح`);
   }
   clock.t += 11 * 60 * 1000;
   await assert.rejects(
-    engine.raid('tg_att', 'tg_vic5', 'req_daily5a'),
+    engine.raid('tg_att', 'tg_vic8', 'req_daily8a'),
     (e) => e instanceof GameError && e.code === 'daily_cap',
+    'سقف 8 محاولات يومياً',
   );
 });
 
@@ -157,14 +205,16 @@ test('الغارة لا تلمس الجواهر ولا تُجرد الضحية',
   const { engine, store } = setup({ rng: () => 0.01 });
   await engine.session(who('tg_1'));
   await engine.session(who('tg_2'));
+  await giveMined(store, 'tg_1');
+  await giveMined(store, 'tg_2');
   await giveCoins(store, 'tg_1', 0);
-  await giveCoins(store, 'tg_2', 60);
+  await giveCoins(store, 'tg_2', 1000);
   await store.mutate((doc) => { doc.players.tg_2.gems = 99; });
-  // 60 عملة: السقف يسمح بـ 5% = 3 < الحد الأدنى 5 → لا غنيمة
   const r = await engine.raid('tg_1', 'tg_2', 'req_poor_01');
-  assert.equal(r.result.success, false);
+  assert.equal(r.result.success, true);
+  assert.equal(r.result.stolen, 120, '12% من 1000 (دون كسر المخزن المحمي)');
   const victim = await engine.getState('tg_2');
-  assert.equal(victim.player.coins, 60);
+  assert.equal(victim.player.coins, 880, 'الضحية تحتفظ بـ70% على الأقل');
   assert.equal(victim.player.gems, 99, 'الجواهر لا تُسرق أبداً');
 });
 
@@ -173,7 +223,7 @@ test('الحفرة اليومية مرة واحدة كل 24 ساعة وتُعط�
   await engine.session(who('tg_1'));
   const r = await engine.dailyDig('tg_1', 'req_daily1');
   assert.equal(r.result.type, 'coins_small');
-  assert.ok(r.result.shieldMs >= 4 * 3600 * 1000);
+  assert.equal(r.result.shieldMs, 60 * 60 * 1000, 'درع يومي أقصر يُبقي الغارات ممكنة');
   assert.ok(r.player.raid.shieldUntil > clock.t);
 
   await assert.rejects(engine.dailyDig('tg_1', 'req_daily2'), (e) => e.code === 'daily_cooldown');

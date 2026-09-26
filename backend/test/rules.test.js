@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   upgradeCost, workerCost, workerBatchCost, powerOf, collectionScore,
-  stealAmount, raidSuccessChance, pickRelic, rollRarity, visitStreakAfter,
+  stealAmount, raidSuccessChance, productionPerSec, raidFailureLoss,
+  pickRelic, rollRarity, visitStreakAfter,
   unlockedRegions, offlineCapHours, REGIONS, RELICS, RARITIES, RAID,
 } from '../src/game/rules.js';
 
@@ -49,16 +50,28 @@ test('المناطق تُفتح حسب مجموع التعدين', () => {
   assert.equal(unlockedRegions(4_000_000).length, REGIONS.length);
 });
 
-test('الغارة تحترم السقف وأرضية الضحية', () => {
+test('الغارة: غنيمة نسبية من المخزون مع مخزن محمي', () => {
   const attacker = basePlayer({ playerId: 'a', regionId: 'coal' });
   const target = basePlayer({ playerId: 'b', coins: 10_000 });
-  // 5% من 10000 = 500، والسقف = 100 + 40 = 140
-  assert.equal(stealAmount(attacker, target, false, 0), 140);
-  // الهدف فقير: 5% من 60 = 3 فقط، ولو سمحت الأرضية بـ10
+  // 12% من 10000 = 1200 (أقل من سقفَي الإنتاج ومن المخزون القابل للسرقة)
+  assert.equal(stealAmount(attacker, target, false, 0), 1200);
+  // من 1000: 12% = 120، والضحية تحتفظ بالمخزن المحمي (30%) وبأكثر
+  const mid = basePlayer({ playerId: 'm', coins: 1000 });
+  assert.equal(stealAmount(attacker, mid, false, 0), 120);
+  // الثأر يضاعف النسبة ×1.25
+  assert.equal(stealAmount(attacker, mid, true, 0), 150);
+  // الفقير: 12% من 60 = 7 فقط
   const poor = basePlayer({ playerId: 'c', coins: 60 });
-  assert.equal(stealAmount(attacker, poor, false, 0), 3);
-  const broke = basePlayer({ playerId: 'd', coins: 40 });
-  assert.equal(stealAmount(attacker, broke, false, 0), 0);
+  assert.equal(stealAmount(attacker, poor, false, 0), 7);
+});
+
+test('مقياس الإنتاج ومخاطرة الفشل محسوبان في القواعد', () => {
+  const p = basePlayer();
+  assert.ok(productionPerSec(p, 0) >= 8, 'الإنتاج لا يقل عن سقف التعدين اليدوي (8/ث)');
+  const rich = basePlayer({ coins: 100_000 });
+  const loss = raidFailureLoss(rich, 0);
+  assert.ok(loss > 0);
+  assert.ok(loss <= Math.floor(100_000 * RAID.failureLossPct), 'الخسارة ضمن 10% من المخزون');
 });
 
 test('فرصة الغارة محدودة بين 25% و80%', () => {

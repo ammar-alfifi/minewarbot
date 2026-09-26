@@ -27,7 +27,8 @@ export default function FriendsTab({ game, catalog }) {
   const now = Date.now();
   const cooldownLeft = Math.max(0, player.raid.cooldownUntil - now);
   const shieldLeft = Math.max(0, player.raid.shieldUntil - now);
-  const capReached = player.raid.winsToday >= player.raid.dailyCap;
+  const capReached = (player.raid.attemptsToday || 0) >= player.raid.dailyCap;
+  const playerProtected = Boolean(player.raid.protected);
   const referral = catalog.referral || {};
 
   const onShare = async () => {
@@ -120,9 +121,10 @@ export default function FriendsTab({ game, catalog }) {
       </div>
       <div className="card tight">
         <div className="between">
-          <span className="small">⚔️ {t('friends.dailyCap')}: <b>{player.raid.winsToday}/{player.raid.dailyCap}</b></span>
+          <span className="small">⚔️ {t('friends.dailyCap')}: <b>{player.raid.attemptsToday}/{player.raid.dailyCap}</b></span>
           <span className="small">⏳ {cooldownLeft > 0 ? `${t('friends.cooldown')} ${duration(cooldownLeft)}` : 'جاهز للغارة'}</span>
         </div>
+        {playerProtected && <div className="muted small mt8">🛡️ {t('friends.protectedHint')}</div>}
       </div>
 
       <div className="card" data-tour="leaderboard">
@@ -131,7 +133,7 @@ export default function FriendsTab({ game, catalog }) {
           {boardLoading && <span className="spinner" />}
         </div>
         <div className="seg" style={{ marginBottom: 10 }}>
-          {['friends', 'season', 'wealth', 'collection'].map((scope) => (
+          {['friends', 'nearby', 'season', 'wealth', 'collection'].map((scope) => (
             <button key={scope} className={board.scope === scope ? 'on' : ''} onClick={() => refreshBoard(scope)}>
               {t('friends.boards.' + scope)}
             </button>
@@ -140,6 +142,7 @@ export default function FriendsTab({ game, catalog }) {
         {board.entries.length === 0 && <p className="muted small center">{t('friends.empty')}</p>}
         {board.entries.map((entry) => {
           const shielded = entry.shieldUntil > now;
+          const protectedNew = Boolean(entry.protected);
           return (
             <div key={entry.playerId} className="lb-row">
               <span className={`lb-rank ${entry.rank <= 3 ? 'top' : ''}`}>
@@ -151,11 +154,13 @@ export default function FriendsTab({ game, catalog }) {
                   {entry.name}
                   {entry.isMe && <span className="tag me">أنت</span>}
                   {entry.isFriend && !entry.isMe && <span className="tag friend">رفيق</span>}
+                  {protectedNew && !entry.isMe && <span className="tag shielded">🛡️ {t('friends.protectedTag')}</span>}
                   {shielded && <span className="tag shielded">🛡️</span>}
                 </div>
                 <div className="lb-sub">
                   {entry.title?.emoji} {entry.title?.name} · {entry.regionEmoji} {entry.relics}🏺
                   {entry.raidEstimate != null && <> · {t('friends.estimate')} {entry.raidEstimate}%</>}
+                  {entry.potentialLoot > 0 && <> · 💰 {short(entry.potentialLoot)}</>}
                 </div>
               </div>
               <div className="lb-score">
@@ -165,9 +170,9 @@ export default function FriendsTab({ game, catalog }) {
               {!entry.isMe && (
                 <button
                   className="btn danger small"
-                  disabled={busy || shielded || cooldownLeft > 0 || capReached}
+                  disabled={busy || shielded || protectedNew || playerProtected || cooldownLeft > 0 || capReached}
                   onClick={() => onRaid(entry)}
-                  title={shielded ? 'الخصم محمي' : ''}
+                  title={protectedNew ? t('friends.protectedHint') : shielded ? 'الخصم محمي' : ''}
                 >
                   ⚔️
                 </button>
@@ -214,7 +219,7 @@ export default function FriendsTab({ game, catalog }) {
         )}
         {!raidLog.incoming?.length && !raidLog.outgoing?.length && <p className="muted small">{t('friends.noLog')}</p>}
         <p className="card-sub">
-          الغارات ودّية: حتى {Math.round(player.raid.stealPct * 100)}% من عملات الخصم بحد أقصى، والضحية تكسب درعاً وفرصة ثأر. لا تُسرق الجواهر أو الآثار أبداً.
+          الغارات حقيقية: عند النجاح تأخذ حتى {Math.round((player.raid.sharePct || 0) * 100)}% من عملات الخصم (بسقف مرتبط بالإنتاج)، وعند الفشل تخسر نسبة من رصيدك (تُلغى في الثأر). الضحية تكسب درعاً وتعويضاً وفرصة ثأر. لا تُسرق الجواهر أو الآثار أبداً.
         </p>
       </div>
     </div>

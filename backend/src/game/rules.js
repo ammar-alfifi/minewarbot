@@ -367,41 +367,82 @@ export function pickRelic(regionId, rng = Math.random) {
 
 export const RAID = {
   cooldownMs: 10 * 60 * 1000,
-  dailySuccessCap: 5,
-  perTargetCooldownMs: 6 * 60 * 1000,
-  baseSuccess: 0.55,
-  minSuccess: 0.25,
-  maxSuccess: 0.8,
-  stealPct: 0.05,
-  stealCapBase: 100,
-  stealCapPerRegion: 40,
+  dailyAttempts: 8,               // 8 محاولات/يوم (الفشل يُحسب) — كل محاولة قرار
+  perTargetCooldownMs: 15 * 60 * 1000,
+  baseSuccess: 0.5,
+  minSuccess: 0.15,
+  maxSuccess: 0.9,
+  powerSwing: 0.35,               // أثر فارق القوة على فرصة النجاح (أوسع من قبل)
+  // الغنيمة: نسبة من مخزون الضحية بسقفَين مرتبطَين بالإنتاج — لا رقم ثابت
+  vaultPct: 0.3,                  // مخزون محمي لا يُلمس أبداً
+  sharePct: 0.12,                 // نسبة المخزون القابلة للسرقة
+  victimLootSeconds: 15 * 60,     // ≤ 15 دقيقة من إنتاج الضحية
+  attackerLootSeconds: 60 * 60,   // ≤ 60 دقيقة من إنتاج المهاجم
+  // مخاطرة المهاجم عند الفشل (قرار حقيقي بدل رمية مجانية)
+  failureLossPct: 0.1,            // 10% من مخزونه
+  failureLossSeconds: 10 * 60,    // ≤ 10 دقائق من إنتاجه
+  failureVaultPct: 0.2,           // لا يهبط تحت 20% من مخزونه
+  defenseRewardShare: 0.6,        // 60% من الخسارة تعويض للضحية، والباقي يُحرق (مصرف عملات)
   revengeStealMult: 1.25,
   revengeSuccessBonus: 0.1,
   revengeWindowMs: 24 * 60 * 60 * 1000,
-  shieldOnRaidMs: 3 * 60 * 60 * 1000,
+  shieldOnRaidMs: 60 * 60 * 1000, // درع أقصر: الغارات تبقى ممكنة
+  shieldCapMs: 4 * 60 * 60 * 1000,
   minDefenderBalance: 50,
   minSteal: 5,
   logLimit: 20,
+  newPlayerProtectionMined: 10000, // حماية المبتدئين: لا يهاجمون ولا يُهاجَمون قبل هذه العتبة
+  seasonBasePoints: 250,           // نقاط موسم أساسية للغارة الناجحة
+  seasonMaxBonus: 1500,            // + مكافأة حسب الغنيمة (تصل الغارات بسباق الموسم)
 };
+
+/** أقصى إنتاج لحظي معقول (عملة/ث): دخل العمّال + سقف التعدين اليدوي المستدام (8/ث). */
+export function productionPerSec(player, now = Date.now()) {
+  const power = powerOf(player, now);
+  return power.idlePerSec + 8 * power.manualBase;
+}
 
 export function raidSuccessChance(attacker, target, isRevenge = false, now = Date.now()) {
   const a = powerOf(attacker, now).manual;
   const d = powerOf(target, now).manual;
   const swing = a + d > 0 ? (a - d) / (a + d) : 0;
-  let chance = RAID.baseSuccess + swing * 0.3 + (isRevenge ? RAID.revengeSuccessBonus : 0);
+  let chance = RAID.baseSuccess + swing * RAID.powerSwing + (isRevenge ? RAID.revengeSuccessBonus : 0);
   chance = Math.max(RAID.minSuccess, Math.min(RAID.maxSuccess, chance));
   return chance;
 }
 
+/** الغنيمة المحتملة عند نجاح الغارة — تتناسب مع اقتصاد الطرفين لا مع رقم ثابت. */
 export function stealAmount(attacker, target, isRevenge = false, now = Date.now()) {
   const def = applyUpgrades(EQUIPMENT, target.equipment).raidDefense || 0;
-  const cap = RAID.stealCapBase + RAID.stealCapPerRegion * regionIndex(attacker.regionId);
-  let amount = Math.floor((target.coins || 0) * RAID.stealPct * (isRevenge ? RAID.revengeStealMult : 1));
-  amount = Math.min(amount, cap);
+  const bank = target.coins || 0;
+  const vault = Math.floor(bank * RAID.vaultPct);
+  const spendable = Math.max(0, bank - vault);
+  const fromBank = Math.floor(bank * RAID.sharePct);
+  const byVictim = Math.floor(productionPerSec(target, now) * RAID.victimLootSeconds);
+  const byAttacker = Math.floor(productionPerSec(attacker, now) * RAID.attackerLootSeconds);
+  let amount = Math.min(fromBank, spendable, byVictim, byAttacker);
+  if (isRevenge) amount = Math.floor(amount * RAID.revengeStealMult);
   amount = Math.floor(amount * (1 - def));
-  const floor = Math.min(RAID.minDefenderBalance, target.coins || 0);
-  amount = Math.min(amount, Math.max(0, (target.coins || 0) - floor));
-  return amount;
+  return Math.max(0, Math.min(amount, spendable));
+}
+
+/** خسارة المهاجم عند فشل الغارة — تُلغى في الثأر. */
+export function raidFailureLoss(attacker, now = Date.now()) {
+  const bank = attacker.coins || 0;
+  const floor = Math.floor(bank * RAID.failureVaultPct);
+  const spendable = Math.max(0, bank - floor);
+  const loss = Math.min(
+    Math.floor(bank * RAID.failureLossPct),
+    Math.floor(productionPerSec(attacker, now) * RAID.failureLossSeconds),
+  );
+  return Math.max(0, Math.min(loss, spendable));
+}
+
+/** نقاط الموسم للغارة الناجحة: أساس ثابت + مكافأة نسبية من الغنيمة. */
+export function raidSeasonPoints(loot, attacker, now = Date.now()) {
+  const prod = Math.max(1, productionPerSec(attacker, now));
+  const bonus = Math.min(RAID.seasonMaxBonus, Math.floor((loot / prod) * 2));
+  return RAID.seasonBasePoints + bonus;
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +451,7 @@ export function stealAmount(attacker, target, isRevenge = false, now = Date.now(
 
 export const DAILY = {
   cooldownMs: 24 * 60 * 60 * 1000,
-  shieldMs: 4 * 60 * 60 * 1000,
+  shieldMs: 60 * 60 * 1000,
   visitGapMs: 48 * 60 * 60 * 1000,
   rewards: [
     { id: 'coins_small', label: 'عملات', weight: 55 },

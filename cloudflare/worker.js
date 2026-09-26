@@ -357,7 +357,7 @@ async function handleApi(request, env, ctx, url) {
     return run(async () => {
       const { identity } = requireIdentity(await resolveIdentity(request, config, null, engine));
       const requested = url.searchParams.get('scope');
-      const scope = ['wealth', 'collection', 'season', 'friends'].includes(requested) ? requested : 'wealth';
+      const scope = ['wealth', 'collection', 'season', 'friends', 'nearby'].includes(requested) ? requested : 'wealth';
       const limit = Math.max(1, Math.min(100, Number(url.searchParams.get('limit')) || 50));
       return engine.leaderboard(scope, identity.playerId, limit);
     });

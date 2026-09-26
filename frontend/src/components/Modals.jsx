@@ -142,12 +142,21 @@ export default function Modals({ game, catalog, onStartTour }) {
         <div className="body">{t('friends.raidDetails')}</div>
         <div className="card tight" style={{ textAlign: 'start' }}>
           {entry.raidEstimate != null && <div className="small">🎯 {t('friends.estimate')}: <b>{entry.raidEstimate}%</b></div>}
-          {entry.potentialLoot != null && entry.potentialLoot > 0 && <div className="small mt8">💰 {t('friends.loot')}: <b>{num(entry.potentialLoot)} 🪙</b></div>}
+          {entry.potentialLoot != null && entry.potentialLoot > 0 && (
+            <div className="small mt8">
+              💰 {t('friends.loot')}: <b>{num(entry.potentialLoot)} 🪙</b>
+              {entry.potentialLootSeconds != null && <span className="muted"> · {t('friends.lootMinutes', { m: entry.potentialLootSeconds })}</span>}
+            </div>
+          )}
+          {!revenge && player?.raid?.lossOnFail > 0 && (
+            <div className="small mt8" style={{ color: 'var(--danger, #ef4444)' }}>⚠️ {t('friends.risk')}: <b>{num(player.raid.lossOnFail)} 🪙</b></div>
+          )}
+          {entry.protected && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ {t('friends.protectedHint')}</div>}
           {shielded && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ الخصم محمي — لا يمكن الهجوم الآن.</div>}
         </div>
         <div className="flex" style={{ gap: 8 }}>
           <button className="btn ghost grow" onClick={close}>{t('modals.cancel')}</button>
-          <button className="btn danger grow" disabled={busy || shielded} onClick={onGo}>{t('modals.raidGo')}</button>
+          <button className="btn danger grow" disabled={busy || shielded || entry.protected || player?.raid?.protected} onClick={onGo}>{t('modals.raidGo')}</button>
         </div>
       </Sheet>
     );

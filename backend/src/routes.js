@@ -235,7 +235,7 @@ export function createApiRoutes({ engine, config }) {
   // ---- لوحة الصدارة --------------------------------------------------------
   router.get('/leaderboard', safe(async (req) => {
     const { identity } = await requireIdentity(req);
-    const scope = ['wealth', 'collection', 'season', 'friends'].includes(req.query?.scope) ? req.query.scope : 'wealth';
+    const scope = ['wealth', 'collection', 'season', 'friends', 'nearby'].includes(req.query?.scope) ? req.query.scope : 'wealth';
     const limit = Math.max(1, Math.min(100, Number(req.query?.limit) || 50));
     return engine.leaderboard(scope, identity.playerId, limit);
   }));

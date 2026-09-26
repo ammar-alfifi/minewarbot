@@ -8,8 +8,8 @@ import {
   FINDS, EVENTS, eventOfWeek, weekId, dayId, DAY_MS, HOUR_MS,
   OFFLINE, offlineCapHours, powerOf, findChances,
   upgradeCost, workerCost, workerBatchCost, upgradeBatchCost,
-  regionById, regionIndex, pickRelic, collectionScore,
-  RAID, raidSuccessChance, stealAmount,
+  regionById, pickRelic, collectionScore,
+  RAID, raidSuccessChance, stealAmount, productionPerSec, raidFailureLoss, raidSeasonPoints,
   DAILY, VISIT_REWARDS, visitStreakAfter,
   MILESTONES, milestoneProgress, TITLES, GROUP_GOAL, REFERRAL,
   unlockedRegions, nextRegion, nextMilestone, saneNumber,
@@ -120,7 +120,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     p.outgoing = Array.isArray(p.outgoing) ? p.outgoing.slice(-RAID.logLimit) : [];
     p.raid = p.raid && typeof p.raid === 'object' ? p.raid : {};
     p.raid.lastAt = saneNumber(p.raid.lastAt, 0, 1e15);
-    p.raid.winsToday = saneNumber(p.raid.winsToday, 0, 100);
+    // ترحيل: كان يُحتسب النجاح فقط (winsToday)؛ صار سقف الغارات على المحاولات.
+    p.raid.attemptsToday = saneNumber(p.raid.attemptsToday ?? p.raid.winsToday, 0, 1000);
+    if (p.raid.winsToday !== undefined) delete p.raid.winsToday;
     p.raid.day = saneNumber(p.raid.day, dayId(ts), 1e9);
     p.raid.targets = p.raid.targets && typeof p.raid.targets === 'object' ? p.raid.targets : {};
     p.inviteGems = p.inviteGems && typeof p.inviteGems === 'object' ? p.inviteGems : { day: dayId(ts), gems: 0 };
@@ -166,7 +168,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       groupChestWeek: -1,
       incoming: [],
       outgoing: [],
-      raid: { lastAt: 0, winsToday: 0, day: dayId(ts), targets: {} },
+      raid: { lastAt: 0, attemptsToday: 0, day: dayId(ts), targets: {} },
       inviteGems: { day: dayId(ts), gems: 0 },
       season: { weekId: weekId(ts), score: 0 },
       lastSeason: null,
@@ -467,7 +469,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
     const power = powerOf(p, ts);
     const chances = findChances(p, ts);
     const capHours = offlineCapHours(p);
-    const winsToday = p.raid.day === dayId(ts) ? p.raid.winsToday : 0;
+    const attemptsToday = p.raid.day === dayId(ts) ? p.raid.attemptsToday : 0;
+    const protectedNew = p.lifetime.totalMined < RAID.newPlayerProtectionMined;
     const doneClaims = new Set((p.groupClaims.weekId === weekId(ts) ? p.groupClaims.ids : []));
     const group = ensureMeta(doc, ts).group;
     const myContribution = group.byPlayer[p.playerId] || 0;
@@ -524,10 +527,15 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       raid: {
         cooldownUntil: p.raid.lastAt + RAID.cooldownMs,
         cooldownMs: RAID.cooldownMs,
-        winsToday,
-        dailyCap: RAID.dailySuccessCap,
+        attemptsToday,
+        dailyCap: RAID.dailyAttempts,
         shieldUntil: p.shieldUntil,
-        stealPct: RAID.stealPct,
+        shieldCapMs: RAID.shieldCapMs,
+        sharePct: RAID.sharePct,
+        vaultPct: RAID.vaultPct,
+        lossOnFail: protectedNew ? 0 : raidFailureLoss(p, ts),
+        protected: protectedNew,
+        protectionMined: RAID.newPlayerProtectionMined,
         perTargetCooldownMs: RAID.perTargetCooldownMs,
         revengeWindowMs: RAID.revengeWindowMs,
       },
@@ -602,8 +610,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       milestones: MILESTONES.map((m) => ({ id: m.id, name: m.name, emoji: m.emoji, type: m.type, threshold: m.threshold, reward: m.reward })),
       groupGoal: GROUP_GOAL,
       raidRules: {
-        cooldownMs: RAID.cooldownMs, dailySuccessCap: RAID.dailySuccessCap, stealPct: RAID.stealPct,
-        minSuccess: RAID.minSuccess, maxSuccess: RAID.maxSuccess, shieldOnRaidMs: RAID.shieldOnRaidMs,
+        cooldownMs: RAID.cooldownMs, dailyAttempts: RAID.dailyAttempts, sharePct: RAID.sharePct,
+        vaultPct: RAID.vaultPct, minSuccess: RAID.minSuccess, maxSuccess: RAID.maxSuccess,
+        shieldOnRaidMs: RAID.shieldOnRaidMs, shieldCapMs: RAID.shieldCapMs,
+        failureLossPct: RAID.failureLossPct, newPlayerProtectionMined: RAID.newPlayerProtectionMined,
         revengeWindowMs: RAID.revengeWindowMs, minDefenderBalance: RAID.minDefenderBalance,
       },
       offline: { ...OFFLINE, baseCapHours: OFFLINE.baseCapHours },
@@ -797,6 +807,14 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       if (!target) fail('اللاعب غير موجود', 404, 'target_not_found');
       touch(doc, target, ts);
 
+      // حماية المبتدئين: من لم يتعدَّ عتبة التعدين لا يهاجم ولا يُهاجَم (عدا الثأر)
+      if (!revenge && attacker.lifetime.totalMined < RAID.newPlayerProtectionMined) {
+        fail('تحتاج مزيداً من التعدين قبل بدء الغارات', 403, 'attacker_protected');
+      }
+      if (!revenge && target.lifetime.totalMined < RAID.newPlayerProtectionMined) {
+        fail('هذا اللاعب جديد وما زال محمياً 🛡️', 403, 'target_protected');
+      }
+
       // إعادة الغارة مسموحة ضمن نافذة زمنية حتى لو كان المهاجم محمياً،
       // لأنها حق طبيعي للهدف الذي سُرق منه (سجل المهاجم contains الضربة التي تلقاها).
       let isRevenge = false;
@@ -816,10 +834,10 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       }
       if (attacker.raid.day !== todayKey(ts)) {
         attacker.raid.day = todayKey(ts);
-        attacker.raid.winsToday = 0;
+        attacker.raid.attemptsToday = 0;
       }
-      if (attacker.raid.winsToday >= RAID.dailySuccessCap) {
-        fail(`بلغت حد ${RAID.dailySuccessCap} غارات ناجحة اليوم — عد غداً`, 429, 'daily_cap');
+      if (attacker.raid.attemptsToday >= RAID.dailyAttempts) {
+        fail(`بلغت حد ${RAID.dailyAttempts} محاولات اليوم — عد غداً`, 429, 'daily_cap');
       }
       const targetAt = attacker.raid.targets[targetId] || 0;
       if (!isRevenge && ts - targetAt < RAID.perTargetCooldownMs) {
@@ -846,40 +864,60 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       };
 
       attacker.raid.lastAt = ts;
+      attacker.raid.attemptsToday += 1;
       attacker.raid.targets[targetId] = ts;
       // تنظيف سجل الأهداف القديم
       const targetEntries = Object.entries(attacker.raid.targets).filter(([, at]) => ts - at < 24 * 60 * 60 * 1000).slice(-60);
       attacker.raid.targets = Object.fromEntries(targetEntries);
+      // الهجوم يكسر درعك: لا تحتمي وتغزو في الوقت نفسه
+      attacker.shieldUntil = 0;
 
       let stolen = 0;
+      let lost = 0;
+      let defenseReward = 0;
+      let won = false;
       let message;
       if (success) {
         stolen = stealAmount(attacker, target, isRevenge, ts);
-        if (stolen < RAID.minSteal) {
-          message = 'الغارة نجحت لكن الخصم لا يملك ما يستحق النقل 🤷';
-          entryBase.success = false;
-          attacker.lifetime.raidsLost += 1;
-        } else {
+        if (stolen >= RAID.minSteal) {
+          won = true;
           target.coins -= stolen;
           addCoins(doc, attacker, stolen, ts, { mined: false });
           attacker.lifetime.raidsWon += 1;
-          attacker.raid.winsToday += 1;
           target.lifetime.raidsDefended += 1;
-          addSeason(doc, attacker, 200, ts);
+          addSeason(doc, attacker, raidSeasonPoints(stolen, attacker, ts), ts);
           const shieldMs = RAID.shieldOnRaidMs + (EQUIPMENT.helmet.effect(target.equipment.helmet).shieldBonusMs || 0);
-          target.shieldUntil = Math.min(ts + 8 * 60 * 60 * 1000, Math.max(target.shieldUntil, ts) + shieldMs);
+          target.shieldUntil = Math.min(ts + RAID.shieldCapMs, Math.max(target.shieldUntil, ts) + shieldMs);
           message = isRevenge
             ? `ثأر ناجح! استعدت ${stolen} عملة ⚔️`
             : `غنيمة! أخذت ${stolen} عملة من ${target.name} 🏆`;
-          entryBase.amount = stolen;
-          entryBase.revengeUntil = ts + RAID.revengeWindowMs;
+        } else {
+          message = 'الغارة نجحت لكن الخصم لا يملك ما يستحق النقل 🤷';
         }
-      } else {
-        attacker.lifetime.raidsLost += 1;
-        message = 'فشلت الغارة — الخصم كان مستعداً 🛡️';
       }
+      if (!won) {
+        attacker.lifetime.raidsLost += 1;
+        if (!isRevenge && !success) {
+          // مخاطرة حقيقية: خسارة من مخزون المهاجم، 60% منها تعويض للضحية والباقي يُحرق
+          lost = raidFailureLoss(attacker, ts);
+          if (lost > 0) {
+            attacker.coins -= lost;
+            defenseReward = Math.floor(lost * RAID.defenseRewardShare);
+            if (defenseReward > 0) addCoins(doc, target, defenseReward, ts, { mined: false });
+            message = `فشلت الغارة — خسرت ${lost} عملة وتعويض دفاع ${defenseReward} 🛡️`;
+          } else {
+            message = 'فشلت الغارة — الخصم كان مستعداً 🛡️';
+          }
+        } else if (isRevenge) {
+          message = 'فشل الثأر — بلا خسارة هذه المرة 🛡️';
+        }
+      }
+      entryBase.success = won;
+      entryBase.amount = stolen;
+      entryBase.loss = lost;
+      entryBase.defenseReward = defenseReward;
 
-      const attackerEntry = { at: ts, opponentId: target.playerId, opponentName: target.name, opponentEmoji: regionById(target.regionId).emoji, success: entryBase.success, amount: stolen, revenge: isRevenge };
+      const attackerEntry = { at: ts, opponentId: target.playerId, opponentName: target.name, opponentEmoji: regionById(target.regionId).emoji, success: won, amount: stolen, lost, revenge: isRevenge };
       attacker.outgoing = [...attacker.outgoing, attackerEntry].slice(-RAID.logLimit);
       target.incoming = [...target.incoming, entryBase].slice(-RAID.logLimit);
       if (isRevenge) {
@@ -889,7 +927,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         }
       }
       // الهدف يعرف أنه سُرق (في سجل الغارات) بدون إشعارات إجبارية
-      const result = { success: entryBase.success, stolen, message, chance: Math.round(chance * 100), shieldUntil: target.shieldUntil };
+      const result = { success: won, stolen, lost, defenseReward, message, chance: Math.round(chance * 100), shieldUntil: target.shieldUntil, attemptsToday: attacker.raid.attemptsToday, dailyCap: RAID.dailyAttempts };
       remember(attacker, requestId, 'raid', result, ts);
       return { result, player: publicState(doc, attacker, ts), target: { playerId: target.playerId, name: target.name, shieldUntil: target.shieldUntil } };
     });
@@ -1063,13 +1101,18 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       manualPower: Math.floor(powerOf(p, ts).manual),
       isMe: p.playerId === viewerId,
       isFriend: viewerFriends.has(p.playerId),
-      canRaid: p.playerId !== viewerId,
+      protected: p.lifetime.totalMined < RAID.newPlayerProtectionMined,
+      canRaid: p.playerId !== viewerId
+        && p.lifetime.totalMined >= RAID.newPlayerProtectionMined
+        && (!viewer || viewer.lifetime.totalMined >= RAID.newPlayerProtectionMined),
     };
     // تقديرات الغارة تُحسب على السيرفر — الواجهة لا تعرف المعادلات.
-    // نقارب الغنيمة لأقرب 5 حتى لا تكشف رصيد الخصم بدقة (الغارات متاحة للجميع بلا صداقة).
+    // الغنيمة متاحة للجميع بلا صداقة، وتُقارب لأقرب 5 حتى لا تكشف رصيد الخصم بدقة.
     if (viewer && p.playerId !== viewerId) {
       entry.raidEstimate = Math.round(raidSuccessChance(viewer, p, false, ts) * 100);
-      entry.potentialLoot = Math.round(stealAmount(viewer, p, false, ts) / 5) * 5;
+      const loot = stealAmount(viewer, p, false, ts);
+      entry.potentialLoot = Math.round(loot / 5) * 5;
+      entry.potentialLootSeconds = Math.round(loot / Math.max(1, productionPerSec(viewer, ts)));
     }
     return entry;
   }
@@ -1085,6 +1128,29 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         .map((id) => playerOf(doc, id))
         .filter(Boolean);
 
+      // أهداف قريبة: مواجهات متكافئة (0.5×–2× من إنتاجك) بلا شرط صداقة
+      if (scope === 'nearby') {
+        const myProd = viewer ? productionPerSec(viewer, ts) : 0;
+        const pool = all.filter((p) => {
+          if (!viewer || p.playerId === viewerId) return false;
+          if (p.lifetime.totalMined < RAID.newPlayerProtectionMined) return false;
+          if (viewer.lifetime.totalMined < RAID.newPlayerProtectionMined) return false;
+          const prod = productionPerSec(p, ts);
+          return prod >= myProd * 0.5 && prod <= myProd * 2;
+        });
+        const picked = pool
+          .map((p) => ({ p, r: rng() }))
+          .sort((a, b) => a.r - b.r)
+          .slice(0, clamp(limit, 1, 8))
+          .map(({ p }) => p);
+        return {
+          scope, label: 'أهداف قريبة',
+          entries: picked.map((p, i) => leaderboardEntry(p, i, 0, viewer, viewerId, ts, viewerFriends)),
+          total: all.length,
+          weekId: weekId(ts),
+        };
+      }
+
       let scoreOf;
       if (scope === 'season') scoreOf = (p) => (p.season.weekId === weekId(ts) ? p.season.score : 0);
       else if (scope === 'collection') scoreOf = (p) => collectionScore(p);
@@ -1099,7 +1165,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         .sort((a, b) => b.score - a.score)
         .slice(0, clamp(limit, 1, 100));
 
-      const label = { wealth: 'الثروة', collection: 'المجموعة', season: 'الموسم', friends: 'رفاقي' }[scope] || 'الثروة';
+      const label = { wealth: 'الثروة', collection: 'المجموعة', season: 'الموسم', friends: 'رفاقي', nearby: 'أهداف قريبة' }[scope] || 'الثروة';
       return {
         scope, label,
         entries: list.map(({ p, score }, i) => leaderboardEntry(p, i, score, viewer, viewerId, ts, viewerFriends)),
