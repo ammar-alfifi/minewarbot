@@ -252,6 +252,9 @@ export function useGame() {
     claim: (kind, id) => run(() => api.claim(kind, id, newRequestId())),
     switchRegion: (regionId) => run(() => api.region(regionId, newRequestId())),
     setTitle: (titleId) => run(() => api.title(titleId, newRequestId())),
+    rebirth: () => run(() => api.rebirth(newRequestId()), { hapticKind: 'heavy' }),
+    legacy: (trackId) => run(() => api.legacy(trackId, newRequestId())),
+    cosmetic: (cosmeticId) => run(() => api.cosmetic(cosmeticId, newRequestId())),
     raid: (targetId, revenge = false) => run(() => api.raid(targetId, newRequestId(), revenge), { hapticKind: 'heavy' }),
     dismissNotices: async (ids) => {
       ids.forEach((id) => dismissedNotices.current.add(id));

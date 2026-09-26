@@ -211,6 +211,28 @@ export function createApiRoutes({ engine, config }) {
     return engine.setTitle(identity.playerId, str(req.body?.titleId, 32), requestId);
   }));
 
+  // ---- بعث المنجم وشجرة الإرث ومتجر التجميل --------------------------------
+  router.post('/actions/rebirth', safe(async (req) => {
+    const { identity } = await requireIdentity(req);
+    const requestId = requestIdOf(req.body);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.rebirth(identity.playerId, requestId);
+  }));
+
+  router.post('/actions/legacy', safe(async (req) => {
+    const { identity } = await requireIdentity(req);
+    const requestId = requestIdOf(req.body);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.legacyUpgrade(identity.playerId, str(req.body?.trackId, 32), requestId);
+  }));
+
+  router.post('/actions/cosmetic', safe(async (req) => {
+    const { identity } = await requireIdentity(req);
+    const requestId = requestIdOf(req.body);
+    if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');
+    return engine.buyCosmetic(identity.playerId, str(req.body?.cosmeticId, 32), requestId);
+  }));
+
   router.post('/actions/notices', safe(async (req) => {
     const { identity } = await requireIdentity(req);
     if (!actionLimiter(identity.playerId).ok) throw new GameError('محاولات كثيرة — انتظر لحظة', 429, 'rate_limited');

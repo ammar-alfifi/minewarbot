@@ -105,6 +105,8 @@ try {
   const UpgradesTab = (await load('/src/components/UpgradesTab.jsx')).default;
   const FriendsTab = (await load('/src/components/FriendsTab.jsx')).default;
   const CollectionTab = (await load('/src/components/CollectionTab.jsx')).default;
+  const RebirthTab = (await load('/src/components/RebirthTab.jsx')).default;
+  const CosmeticSheet = (await load('/src/components/Cosmetics.jsx')).default;
   const Modals = (await load('/src/components/Modals.jsx')).default;
   const Header = (await load('/src/components/Header.jsx')).default;
   const TutorialModule = await load('/src/components/Tutorial.jsx');
@@ -127,7 +129,9 @@ try {
   render(MineTab, { game }, 'شاشة المنجم', ['عدّن', player.region.name, 'المنطقة القادمة']);
   render(UpgradesTab, { game, catalog }, 'شاشة الترقيات', ['المعدات', 'العمّال', 'المرافق']);
   render(FriendsTab, { game, catalog }, 'شاشة الأصدقاء', ['الحفرة الجماعية', 'دعوة صديق']);
-  render(CollectionTab, { game, catalog }, 'شاشة المجموعة', ['الآثار', 'الألقاب', 'الإنجازات والمكافآت']);
+  render(CollectionTab, { game, catalog }, 'شاشة المجموعة', ['الآثار', 'الألقاب', 'الإنجازات والمكافآت', 'متجر التجميل']);
+  render(RebirthTab, { game }, 'شاشة الإرث (البعث)', ['بعث المنجم', 'شجرة نوى الإرث', 'شروط البعث']);
+  render(CosmeticSheet, { game, onClose: noop }, 'متجر التجميل', ['إطار برونزي', 'متجر التجميل']);
 
   // النوافذ المنبثقة بكل أنواعها
   const rarity = catalog.rarities[catalog.relics[0].rarity];
@@ -140,6 +144,7 @@ try {
     ['raid', { entry: { playerId: 'x', name: 'خصم', raidEstimate: 55, potentialLoot: 40, shieldUntil: 0 }, revenge: false }],
     ['region', {}],
     ['relic', { relic: catalog.relics[0], count: 2, firstAt: Date.now(), rarity }],
+    ['rebirth', {}],
     ['help', {}],
   ];
   for (const [type, payload] of modals) {

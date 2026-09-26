@@ -56,6 +56,14 @@ export default function CollectionTab({ game, catalog }) {
       </div>
 
       <div className="card">
+        <h3 className="card-title">🎨 {t('cosmetics.title')}</h3>
+        <div className="between">
+          <span className="small muted">{t('cosmetics.hint')}</span>
+          <button className="btn small primary" disabled={busy} onClick={() => setModal({ type: 'cosmetic' })}>🛍️ {t('cosmetics.title')}</button>
+        </div>
+      </div>
+
+      <div className="card">
         <h3 className="card-title">🏆 {t('collection.season')}</h3>
         <div className="between">
           <span className="small">🎯 {t('collection.seasonScore')}: <b>{short(player.season.score)}</b></span>

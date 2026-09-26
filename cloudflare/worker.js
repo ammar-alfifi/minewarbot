@@ -336,6 +336,28 @@ async function handleApi(request, env, ctx, url) {
     });
   }
 
+  // ---- بعث المنجم وشجرة الإرث ومتجر التجميل --------------------------------
+  if (pathname === '/api/actions/rebirth' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.rebirth(identity.playerId, requestIdOf(body));
+    });
+  }
+
+  if (pathname === '/api/actions/legacy' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.legacyUpgrade(identity.playerId, str(body?.trackId, 32), requestIdOf(body));
+    });
+  }
+
+  if (pathname === '/api/actions/cosmetic' && method === 'POST') {
+    return run(async () => {
+      const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));
+      return engine.buyCosmetic(identity.playerId, str(body?.cosmeticId, 32), requestIdOf(body));
+    });
+  }
+
   if (pathname === '/api/actions/notices' && method === 'POST') {
     return run(async () => {
       const { identity } = requireIdentity(await resolveIdentity(request, config, body, engine));

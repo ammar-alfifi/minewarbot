@@ -46,6 +46,12 @@ export default function MineTab({ game }) {
             <div>
               <div className="title">{player.region.name} <span className="tag">×{player.region.mult}</span></div>
               <div className="desc">{player.region.tagline}</div>
+              {player.region.specialty && (
+                <div className="small muted mt8">
+                  🎯 {player.region.specialty.specialty?.label} +{Math.round(player.region.specialty.specialty.value * 100)}%
+                  {player.region.specialty.special ? ` · ⭐ ${player.region.specialty.special.label} +${Math.round(player.region.specialty.special.value * 100)}%` : ''}
+                </div>
+              )}
             </div>
           </div>
           <button className="btn small ghost" onClick={() => setModal({ type: 'region' })}>{t('mine.change')}</button>

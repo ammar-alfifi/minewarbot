@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { createJsonStore } from '../src/store.js';
 import { createEngine, GameError } from '../src/game/engine.js';
+import { REGIONS } from '../src/game/rules.js';
 
 const HOUR = 3600_000;
 
@@ -268,7 +269,8 @@ test('استلام الإنجاز مرة واحدة وعلى أساس التقد
 test('فتح المناطق تلقائياً مع التقدم ويُختار الأحدث', async () => {
   const { engine, store } = setup();
   await engine.session(who('tg_1'));
-  await store.mutate((doc) => { doc.players.tg_1.lifetime.totalMined = 9000; });
+  // فتح المناطق يتبع تقدّم الدورة (runMined) لا المجموع مدى الحياة
+  await store.mutate((doc) => { doc.players.tg_1.runMined = 9000; });
   const state = await engine.getState('tg_1');
   assert.deepEqual(state.player.regionsUnlocked, ['surface', 'coal', 'crystal']);
   assert.equal(state.player.region.id, 'crystal');
@@ -497,8 +499,124 @@ test('يُنظّف ضيوف المتصفح الفارغين المنقطعين (
     stale.lastSeen = clock.t - 31 * 24 * HOUR;
     // الفارغ المنقطع فقط هو المرشّح
   });
-  clock.t += 2 * HOUR; // لتجاوز حارس التنظيف الساعي
+  clock.t += 2 * HOUR; // لتجاوز حارس التنظيف الختامي الساعي
   await engine.leaderboard('wealth', null);
   assert.equal(await store.get('guest_stale'), null, 'الضيف الفارغ المنقطع يُنظّف');
   assert.ok(await store.get('guest_keeper'), 'الضيف صاحب الرصيد يبقى');
+});
+
+test('البعث يعيد تأسيس المنجم ويحوّل الإنجاز إلى نوى مع الحفاظ على السجل', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1', 'باعث'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.equipment.pickaxe = 20;
+    p.workers = 10;
+    p.regionsUnlocked = REGIONS.map((r) => r.id);
+    p.runMined = 50_000_000;
+    p.runManualMined = 10_000_000;
+    p.coins = 123456;
+    p.gems = 40;
+    p.relics = { fossil_shell: { count: 1, firstAt: 0 } };
+    p.lifetime.totalMined = 60_000_000;
+    p.lifetime.relicsFound = 1;
+    p.season.score = 777;
+  });
+  const before = await engine.getState('tg_1');
+  assert.equal(before.player.rebirth.eligible, true);
+  assert.equal(before.player.rebirth.cores, 1);
+
+  const res = await engine.rebirth('tg_1', 'req_rebrth1');
+  assert.equal(res.result.cores, 1);
+  assert.equal(res.result.rebirths, 1);
+  assert.equal(res.player.coins, 0, 'يُصفّر رصيد الدورة');
+  assert.equal(res.player.workers, 0);
+  assert.equal(res.player.equipment.pickaxe, 1);
+  assert.deepEqual(res.player.regionsUnlocked, ['surface']);
+  assert.equal(res.player.rebirth.runMined, 0);
+  assert.equal(res.player.rebirth.threshold, 250_000_000, 'العتبة التالية ×5');
+  assert.equal(res.player.legacy.cores, 1, 'نواة واحدة عند 1× العتبة');
+  // ما يبقى دائمًا
+  assert.equal(res.player.gems, 40);
+  assert.equal(res.player.relics.length, 1);
+  assert.equal(res.player.stats.totalMined, 60_000_000);
+  assert.equal(res.player.stats.rebirths, 1);
+  assert.equal(res.player.season.score, 777);
+
+  const replay = await engine.rebirth('tg_1', 'req_rebrth1');
+  assert.equal(replay.replayed, true, 'لا يُنفَّذ البعث مرتين لنفس الطلب');
+});
+
+test('البعث يُرفض إذا نقص التعدين اليدوي (الدخل الخامل لا يكفي)', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.equipment.pickaxe = 20; p.workers = 10;
+    p.regionsUnlocked = REGIONS.map((r) => r.id);
+    p.runMined = 50_000_000; p.runManualMined = 0;
+  });
+  await assert.rejects(engine.rebirth('tg_1', 'req_rebrth2'), (e) => e.code === 'rebirth_not_ready');
+});
+
+test('شجرة نوى الإرث: شراء بالأنوية بحدود المستويات', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => { doc.players.tg_1.legacyCores = 2; });
+  const up = await engine.legacyUpgrade('tg_1', 'vein_memory', 'req_legcy1');
+  assert.equal(up.result.rank, 1);
+  assert.equal(up.player.legacy.cores, 1);
+  assert.equal(up.player.legacy.tracks.find((t) => t.id === 'vein_memory').rank, 1);
+  await engine.legacyUpgrade('tg_1', 'vein_memory', 'req_legcy2');
+  await assert.rejects(engine.legacyUpgrade('tg_1', 'vein_memory', 'req_legcy3'), (e) => e.code === 'insufficient_cores');
+  await assert.rejects(engine.legacyUpgrade('tg_1', 'nope', 'req_legcy4'), (e) => e.code === 'unknown_legacy_track');
+});
+
+test('متجر التجميل: شراء بالجواهر وتجهيز بلا تكرار', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => { doc.players.tg_1.gems = 100; });
+  const buy = await engine.buyCosmetic('tg_1', 'frame_bronze', 'req_cosm01');
+  assert.equal(buy.result.bought, true);
+  assert.equal(buy.player.gems, 85);
+  assert.equal(buy.player.cosmetics.equipped.frame, 'frame_bronze');
+  const again = await engine.buyCosmetic('tg_1', 'frame_bronze', 'req_cosm02');
+  assert.equal(again.result.bought, false, 'ملكه سابقاً فلا يُخصم مرة أخرى');
+  assert.equal(again.player.gems, 85);
+  await assert.rejects(engine.buyCosmetic('tg_1', 'camp_aurora', 'req_cosm03'), (e) => e.code === 'insufficient_gems');
+});
+
+test('تكرار مكافأة اليوم السابع يمنح عملات لا جواهر', async () => {
+  const { engine, store, clock } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.visitStreak = 7; p.visitGemsAt = clock.t; p.visitAt = clock.t - 25 * HOUR; p.gems = 0;
+  });
+  const s = await engine.getState('tg_1');
+  assert.equal(s.visitReward.repeat, true);
+  assert.equal(s.visitReward.gems, 0);
+  assert.ok(s.visitReward.coins > 0, 'مكافأة عملات بديلة');
+  assert.equal(s.player.gems, 0);
+});
+
+test('الصندوق الجماعي يشترط مساهمين كافيين عند تعدد اللاعبين', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await engine.session(who('tg_2'));
+  await engine.session(who('tg_3'));
+  // ثلاثة مساهمين لكن اثنان فقط بلغا الحد الأدنى (5,000)
+  await store.mutate((doc) => {
+    doc.meta.group.contributed = 300000;
+    doc.meta.group.byPlayer = { tg_1: 290000, tg_2: 5000, tg_3: 100 };
+    doc.players.tg_1.gems = 0;
+  });
+  const blocked = await engine.getState('tg_1');
+  assert.equal(blocked.player.group.chest.eligible, false);
+  assert.equal(blocked.player.gems, 0, 'لا صندوق بلا مساهمين كافيين');
+  // رفع الثالث للحد الأدنى يكتمل الشرط
+  await store.mutate((doc) => { doc.meta.group.byPlayer.tg_3 = 5000; });
+  const ok = await engine.getState('tg_1');
+  assert.equal(ok.player.group.chest.eligible, true);
+  assert.equal(ok.player.gems, 3);
 });
