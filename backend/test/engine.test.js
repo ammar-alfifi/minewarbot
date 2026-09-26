@@ -189,6 +189,60 @@ test('الغارة: الفشل يخسّر المهاجم ويعوّض الضحي
   assert.equal(victim.player.coins, 10000 + r.result.defenseReward, 'الضحية كسبت تعويض دفاع');
 });
 
+test('مؤشرات مراقبة الغارات: النجاح، الثأر، ومن لا يجد هدفاً', async () => {
+  const { engine, store } = setup({ rng: () => 0.01 });
+  await engine.session(who('tg_1', 'المهاجم'));
+  await engine.session(who('tg_2', 'الضحية'));
+  await giveMined(store, 'tg_1');
+  await giveMined(store, 'tg_2');
+  await giveCoins(store, 'tg_1', 1000);
+  await giveCoins(store, 'tg_2', 10000);
+
+  // لاعبان متكافئان ومؤهلان: كل واحد يجد هدفاً قريباً، ولا ثأر أو خسائر بعد.
+  let s = await engine.stats();
+  assert.equal(s.raids.eligible, 2);
+  assert.equal(s.raids.targetless, 0, 'لاعبان متكافئان يجدان بعضهما');
+  assert.equal(s.raids.targetlessShare, 0);
+  assert.equal(s.raids.revenges, 0);
+  assert.equal(s.raids.avgLoss, 0);
+
+  await engine.raid('tg_1', 'tg_2', 'req_mon_01');
+  await engine.raid('tg_2', 'tg_1', 'req_mon_02', { revenge: true });
+
+  s = await engine.stats();
+  assert.equal(s.raids.won, 2, 'غرّتان ناجحتان');
+  assert.equal(s.raids.lost, 0);
+  assert.equal(s.raids.raiders, 2, 'لاعبان دخلا الغارات');
+  assert.equal(s.raids.revenges, 1, 'ثأر واحد مسجَّل في السجل');
+  assert.equal(s.raids.winRate, 100);
+});
+
+test('مؤشر «من لا يجد هدفاً» يرصد اللاعب الوحيد، ومتوسط الخسارة يرصد الفشل', async () => {
+  const { engine, store } = setup({ rng: () => 0.99 }); // فشل دائم
+  await engine.session(who('tg_1'));
+  await engine.session(who('tg_2'));
+  await giveMined(store, 'tg_1');
+  await giveMined(store, 'tg_2');
+  await giveCoins(store, 'tg_1', 1000);
+  await giveCoins(store, 'tg_2', 10000);
+
+  const r = await engine.raid('tg_1', 'tg_2', 'req_mon_fail');
+  assert.equal(r.result.success, false);
+  const s = await engine.stats();
+  assert.equal(s.raids.lost, 1);
+  assert.equal(s.raids.avgLoss, r.result.lost, 'متوسط الخسارة يطابق خسارة الغارة الفاشلة');
+  assert.equal(s.raids.winRate, 0);
+
+  // لاعب مؤهل وحيد لا يجد هدفاً
+  const lone = setup({ rng: () => 0.5 });
+  await lone.engine.session(who('tg_solo'));
+  await giveMined(lone.store, 'tg_solo');
+  const solo = await lone.engine.stats();
+  assert.equal(solo.raids.eligible, 1);
+  assert.equal(solo.raids.targetless, 1, 'اللاعب الوحيد بلا هدف');
+  assert.equal(solo.raids.targetlessShare, 100);
+});
+
 test('حماية المبتدئين: لا غارات تحت عتبة التعدين', async () => {
   const { engine, store } = setup({ rng: () => 0.01 });
   await engine.session(who('tg_new'));
