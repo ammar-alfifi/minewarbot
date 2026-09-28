@@ -20,6 +20,7 @@ const ar = {
     tap: 'عدّن!',
     tapHint: 'اضغط بسرعة للتعدين اليدوي',
     region: 'المنطقة الحالية',
+    stage: 'المرحلة {n} من {total}',
     change: 'تغيير المنطقة',
     locked: 'مقفلة',
     unlockAt: 'تُفتح عند',

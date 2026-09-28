@@ -109,6 +109,8 @@ try {
   const CosmeticSheet = (await load('/src/components/Cosmetics.jsx')).default;
   const Modals = (await load('/src/components/Modals.jsx')).default;
   const Header = (await load('/src/components/Header.jsx')).default;
+  const SceneLayer = (await load('/src/components/SceneLayer.jsx')).default;
+  const { SCENES } = await load('/src/scenes.js');
   const TutorialModule = await load('/src/components/Tutorial.jsx');
   const Tutorial = TutorialModule.default;
   const TUTORIAL_STEPS = TutorialModule.TUTORIAL_STEPS;
@@ -132,6 +134,27 @@ try {
   render(CollectionTab, { game, catalog }, 'شاشة المجموعة', ['الآثار', 'الألقاب', 'الإنجازات والمكافآت', 'متجر التجميل']);
   render(RebirthTab, { game }, 'شاشة الإرث (البعث)', ['بعث المنجم', 'شجرة نوى الإرث', 'شروط البعث']);
   render(CosmeticSheet, { game, onClose: noop }, 'متجر التجميل', ['إطار برونزي', 'متجر التجميل']);
+
+  // مشاهد المناطق الثمانية: كل منطقة لها تصميم مستقل بلا تكرار
+  const sceneKeys = Object.keys(SCENES);
+  const sceneHtml = {};
+  for (const key of sceneKeys) {
+    try {
+      const html = renderToString(React.createElement(SceneLayer, { scene: SCENES[key] }));
+      sceneHtml[key] = html;
+      if (!html.includes(`data-region="${key}"`)) bad(`مشهد ${key}: وسم المنطقة غائب`);
+      else if (html.length < 400) bad(`مشهد ${key}: رسمة مختصرة جداً`);
+      else ok(`مشهد المنطقة: ${key} (${html.length} حرف)`);
+    } catch (err) {
+      bad(`مشهد المنطقة: ${key}`, err);
+    }
+  }
+  const distinctScenes = new Set(Object.values(sceneHtml));
+  if (sceneKeys.length === 8 && distinctScenes.size === sceneKeys.length) {
+    ok(`مشاهد المناطق: ${distinctScenes.size} تصميمات مختلفة`);
+  } else {
+    bad(`مشاهد المناطق مكرّرة أو ناقصة: ${distinctScenes.size}/${sceneKeys.length}`);
+  }
 
   // النوافذ المنبثقة بكل أنواعها
   const rarity = catalog.rarities[catalog.relics[0].rarity];
