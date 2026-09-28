@@ -45,6 +45,12 @@ export default function RebirthTab({ game }) {
   const onGoal = (goal) => actions.cycleGoal(goal.id);
   const onLegacy = (track) => actions.legacy(track.id);
 
+  // قوة البعث الدائمة: قيم جاهزة من السيرفر، والواجهة تعرضها فقط.
+  const mult = rb.multiplier ?? 1;
+  const nextMult = rb.nextMultiplier ?? mult;
+  const powerPct = Math.round((rb.powerPerRebirth ?? 0) * 100);
+  const fmtMult = (v) => `×${Number(v).toFixed(2)}`;
+
   return (
     <div>
       <div className="card">
@@ -67,6 +73,16 @@ export default function RebirthTab({ game }) {
           </div>
         </div>
         {rb.seeded && <p className="card-sub">🎁 {t('rebirth.seeded')}</p>}
+      </div>
+
+      <div className="card">
+        <h3 className="card-title">⚡ {t('rebirth.powerTitle')}</h3>
+        <div className="stat-grid">
+          <Stat value={fmtMult(mult)} label={t('rebirth.powerNow')} />
+          <Stat value={fmtMult(nextMult)} label={t('rebirth.powerNext')} />
+          <Stat value={`+${powerPct}%`} label={t('rebirth.powerGain')} />
+        </div>
+        <p className="card-sub mt8">{t('rebirth.powerHint', { pct: powerPct })}</p>
       </div>
 
       <div className="card">

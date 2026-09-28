@@ -14,7 +14,7 @@ import {
   MILESTONES, milestoneProgress, TITLES, GROUP_GOAL, groupChestStatus, REFERRAL,
   SEASON_REWARDS, seasonRewardFor,
   REBIRTH, rebirthThreshold, rebirthCores, rebirthConditions, qualifiesForRebirthSeed, RUN_MINED_CAP, seedManualMined,
-  rebirthHeadStart,
+  rebirthHeadStart, rebirthMultiplier,
   CYCLE_GOALS, cycleGoalProgress, REBIRTH_BADGES, rebirthBadge,
   LEGACY_TRACKS, LEGACY_COST, legacyRanks, COSMETICS,
   unlockedRegions, nextRegion, nextMilestone, saneNumber,
@@ -670,6 +670,9 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
           totalRegions: REGIONS.length,
           nextThreshold: rebirthThreshold((p.rebirthCount || 0) + 1),
           headStart: rebirthHeadStart((p.rebirthCount || 0) + 1),
+          multiplier: rebirthMultiplier(p.rebirthCount || 0),
+          nextMultiplier: rebirthMultiplier((p.rebirthCount || 0) + 1),
+          powerPerRebirth: REBIRTH.powerPerRebirth,
           conditions: st.conditions,
           eligible: st.eligible,
           cores: st.cores,
@@ -769,6 +772,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
         manualShare: REBIRTH.manualShare,
         thresholdMult: REBIRTH.thresholdMult, minPickaxe: REBIRTH.minPickaxe,
         minWorkers: REBIRTH.minWorkers, maxCores: REBIRTH.maxCores,
+        powerPerRebirth: REBIRTH.powerPerRebirth,
         headStart: { ...REBIRTH.headStart },
         keepNote: REBIRTH.keepNote, resetNote: REBIRTH.resetNote,
       },
@@ -1307,7 +1311,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       const fromCount = p.rebirthCount;
       const before = { totalMined: p.lifetime.totalMined, relics: Object.keys(p.relics).length, gems: p.gems };
 
-      // الدورة الجديدة تبدأ بمعول وعمّال متدرّجين حسب عدد مرات البعث (بداية متقدّمة).
+      // الدورة الجديدة تبدأ بمعول وعمّال متدرّجين حسب عدد مرات البعث (بداية متقدّمة)،
+      // مع رفع قوة البعث الدائمة (مضاعف دخل لا يُصفَّر).
       const nextCount = saneNumber(p.rebirthCount, 0, 1e6) + 1;
       const head = rebirthHeadStart(nextCount);
       // يُصفَّر تطور المنجم الجاري فقط؛ كل السجل والعلاقات والمجموعة تبقى.
@@ -1328,7 +1333,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
 
       const result = {
         rebirths: p.rebirthCount, cores, legacyCores: p.legacyCores,
-        headStart: head, threshold: rebirthThreshold(p.rebirthCount), kept: before,
+        headStart: head, multiplier: rebirthMultiplier(p.rebirthCount),
+        threshold: rebirthThreshold(p.rebirthCount), kept: before,
       };
       pushNotice(p, 'rebirth', result, ts);
       remember(p, requestId, 'rebirth', result, ts);

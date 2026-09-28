@@ -332,12 +332,13 @@ export function powerOf(player, now = Date.now()) {
   const event = eventOfWeek(now);
   const boostActive = player.boostUntil > now;
   const legacy = legacyBonus(player);
+  const rebirthMult = rebirthMultiplier(player.rebirthCount || 0);
   const regionManual = 1 + regionOutputBonus(region.id, 'manual');
   const regionIdle = 1 + regionOutputBonus(region.id, 'idle');
 
-  const manualBase = (eq.manualPower || 1) * (fac.manualMult || 1) * region.coinMult * legacy.coinMult * legacy.manualMult * regionManual;
+  const manualBase = (eq.manualPower || 1) * (fac.manualMult || 1) * region.coinMult * legacy.coinMult * legacy.manualMult * regionManual * rebirthMult;
   const manual = manualBase * (event.manualMult || 1) * (boostActive ? BOOST.multiplier : 1);
-  const workerEach = WORKER.baseRate(player.equipment.pickaxe) * (fac.workerMult || 1) * region.coinMult * legacy.coinMult;
+  const workerEach = WORKER.baseRate(player.equipment.pickaxe) * (fac.workerMult || 1) * region.coinMult * legacy.coinMult * rebirthMult;
   const idlePerSec = player.workers * workerEach * (event.idleMult || 1) * regionIdle;
   const findMult = eq.findMult || 1;
 
@@ -678,16 +679,19 @@ export const REBIRTH = {
   baseThreshold: 50_000_000,       // تعدين الدورة الأولى
   manualThreshold: 10_000_000,     // الحد الأدنى المطلق للتعدين اليدوي
   manualShare: 0.2,                // وكحد أدنى: 20% من عتبة الدورة (يحفظ معنى الشرط مع تصاعد العتبات)
-  thresholdMult: 3,                // كل دورة = ×3 (تصاعد أبطأ من السقف الثقيل: دورات أكثر قابلة للإنجاز)
+  thresholdMult: 2.5,              // كل دورة = ×2.5 (تصاعد معتدل يبقى قابلاً للإنجاز مع قوة البعث الدائمة)
   minPickaxe: 20,
   minWorkers: 10,
   coresThresholdMult: 2,           // الأساس=1 نواة، 2×=2 نوى، 4×=3 نوى
   maxCores: 3,
+  // قوة البعث الدائمة: كل بعث يرفع كل دخل التعدين (اليدوي والخامل) بنسبة ثابتة
+  // وبلا سقف، فيبقى لكل بعث أثر حقيقي دائماً ويواكب تصاعد العتبة بدل أن يتوقف.
+  powerPerRebirth: 0.4,
   // بداية متقدّمة للدورة الجديدة: معول وعمّال متدرّجان حسب عدد مرات البعث،
-  // حتى لا يبدأ اللاعب من الصفر التام بعد كل بعث (تخفّف ألم إعادة البناء).
-  headStart: { pickaxePerRebirth: 1, maxPickaxe: 10, workersPerRebirth: 1, maxWorkers: 5 },
-  keepNote: 'يبقى دائماً: الآثار والمجموعة، الجواهر، الألقاب، الأصدقاء والإحالات، مجموع التعدين مدى الحياة، الإنجازات، سجل المواسم، مساهمة الجماعة، وسجل الغارات. لا تُصفَّر مؤقتات الحفرة اليومية وسلسلة الزيارة والدرع.',
-  resetNote: 'يُصفَّر لبدء منجم جديد: العملات، مستويات المعدات والمرافق، المنطقة الحالية والمناطق المفتوحة في الدورة، وعدّادا تعدين الدورة — وتبدأ الدورة الجديدة بمعول وعمّال متدرّجين حسب عدد مرات البعث.',
+  // حتى لا يبدأ اللاعب من الصفر التام بعد كل بعث (تُخفّف إعادة البناء كلما تكرر البعث).
+  headStart: { pickaxePerRebirth: 3, maxPickaxe: 45, workersPerRebirth: 8, maxWorkers: 150 },
+  keepNote: 'يبقى دائماً: قوة البعث الدائمة، الآثار والمجموعة، الجواهر، الألقاب، الأصدقاء والإحالات، مجموع التعدين مدى الحياة، الإنجازات، سجل المواسم، مساهمة الجماعة، وسجل الغارات. لا تُصفَّر مؤقتات الحفرة اليومية وسلسلة الزيارة والدرع.',
+  resetNote: 'يُصفَّر لبدء منجم جديد: العملات، مستويات المعدات والمرافق، المنطقة الحالية والمناطق المفتوحة في الدورة، وعدّادا تعدين الدورة. لكنك تكسب قوة بعث دائمة (+40% دخل لكل بعث لا تُصفَّر) وتبدأ بمعول وعمّال متدرّجين حسب عدد مرات البعث.',
 };
 
 /** عتبة تعدين الدورة رقم cycles (نمو هندسي ×thresholdMult). */
@@ -713,8 +717,8 @@ export function rebirthCores(runMined, threshold) {
 }
 
 /**
- * بداية الدورة الجديدة بعد n بعث: معول وعمّال متدرّجان بسقف نصف شروط البعث،
- * فيبقى للبعث عائد ملموس ويخفّ ألم إعادة البناء من الصفر.
+ * بداية الدورة الجديدة بعد n بعث: معول وعمّال متدرّجان بسقف أعلى بكثير من شروط
+ * البعث، فيخفّ ألم إعادة البناء كلما تكرّر البعث وتبقى للترقيات متّسع.
  */
 export function rebirthHeadStart(rebirths) {
   const n = Math.max(0, Math.floor(Number(rebirths) || 0));
@@ -723,6 +727,15 @@ export function rebirthHeadStart(rebirths) {
     pickaxe: Math.min(hs.maxPickaxe, 1 + n * hs.pickaxePerRebirth),
     workers: Math.min(hs.maxWorkers, n * hs.workersPerRebirth),
   };
+}
+
+/**
+ * قوة البعث الدائمة: مضاعف يرفع كل دخل التعدين (اليدوي والخامل) بنسبة
+ * REBIRTH.powerPerRebirth لكل بعث، بلا سقف. يبدأ من 1 عند صفر بعث.
+ */
+export function rebirthMultiplier(rebirths) {
+  const n = Math.max(0, Math.floor(Number(rebirths) || 0));
+  return 1 + REBIRTH.powerPerRebirth * n;
 }
 
 /** سقف عدّاد تعدين الدورة: يكفي لإنجاز أكبر عدد دورات مقصود بحد النوى. */
