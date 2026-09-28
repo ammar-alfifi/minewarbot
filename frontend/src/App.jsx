@@ -1,5 +1,5 @@
 // التطبيق: الهيكل العام، التبويبات، الطبقات العائمة
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useGame } from './hooks/useGame.js';
 import { t } from './i18n.js';
 import Header from './components/Header.jsx';
@@ -50,6 +50,21 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [game.status, game.player?.tutorialDone, game.modal, tour]);
 
+  // تأثير الانتقال عند تغيير المنطقة: بطاقة تعريف + ومضة بلون المنطقة لإحساس الهبوط لعمق جديد.
+  // لا يظهر عند أول تحميل (المشهد نفسه يدخل بحركة)، بل فقط عند الانتقال الفعلي.
+  const regionId = game.player?.region?.id || null;
+  const [regionFx, setRegionFx] = useState(null);
+  const firstRegionRef = useRef(null);
+  useEffect(() => {
+    if (!regionId) return undefined;
+    if (firstRegionRef.current === null) { firstRegionRef.current = regionId; return undefined; }
+    if (firstRegionRef.current === regionId) return undefined;
+    firstRegionRef.current = regionId;
+    setRegionFx({ id: regionId, at: Date.now() });
+    const timer = setTimeout(() => setRegionFx(null), 1400);
+    return () => clearTimeout(timer);
+  }, [regionId]);
+
   const finishTour = (completed) => {
     try { localStorage.setItem('minewarr.tour.v1', 'done'); } catch {}
     setTab(completed ? 'mine' : (tour?.from || 'mine'));
@@ -60,6 +75,7 @@ export default function App() {
   if (game.status === 'loading') {
     return (
       <div className="app">
+        <SceneLayer scene={sceneFor(null)} />
         <div className="topbar">
           <div className="topbar-row">
             <div className="topbar-title">⛏️ {t('appName')}</div>
@@ -94,17 +110,30 @@ export default function App() {
     );
   }
 
-  const regionTheme = game.player?.region?.theme;
-  const scene = sceneFor(game.player?.region?.id);
+  const scene = sceneFor(regionId);
   const appVars = {
-    ...(regionTheme ? { '--region-from': regionTheme.from, '--region-to': regionTheme.to } : {}),
+    '--region-from': scene.sky[0],
+    '--region-to': scene.sky[2],
     '--scene-accent': scene.accent,
     '--scene-accent2': scene.accent2,
+    '--scene-ink': scene.ink,
+    '--rock-1': scene.rock[0],
+    '--rock-2': scene.rock[1],
+    '--rock-3': scene.rock[2],
   };
 
   return (
-    <div className="app" style={appVars}>
-      <SceneLayer scene={scene} />
+    <div className="app" style={appVars} data-region={scene.id}>
+      <SceneLayer key={scene.id} scene={scene} />
+      {regionFx && (
+        <div className="region-fx" key={regionFx.at} style={{ '--fx': scene.accent }} aria-hidden="true">
+          <div className="region-fx-card">
+            <span className="region-fx-emoji">{game.player.region.emoji}</span>
+            <b>{game.player.region.name}</b>
+            <small>{game.player.region.tagline}</small>
+          </div>
+        </div>
+      )}
       <Header
         game={game}
         onHelp={() => game.setModal({ type: 'help' })}

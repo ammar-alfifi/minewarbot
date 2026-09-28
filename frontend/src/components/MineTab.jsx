@@ -13,7 +13,7 @@ const DEBRIS = [
 let burstSeq = 0;
 
 export default function MineTab({ game }) {
-  const { player, actions, setModal, pushToast, busy, pending } = game;
+  const { player, actions, setModal, pushToast, busy, pending, catalog } = game;
   const [crack, setCrack] = useState(0);
   const [bursts, setBursts] = useState([]);
   const [shake, setShake] = useState(false);
@@ -42,6 +42,9 @@ export default function MineTab({ game }) {
 
   const dailyReady = player.daily.availableAt <= Date.now();
   const boostActive = player.power.boostActive;
+  const regions = catalog?.regions || [];
+  const stageIndex = Math.max(1, regions.findIndex((r) => r.id === player.region.id) + 1);
+  const stageTotal = regions.length || 8;
   const nextRegion = player.goals.nextRegion;
   const nextMilestone = player.goals.nextMilestone;
   // شريط المنطقة القادمة يتبع عدّاد الدورة نفسه الذي يفتح المناطق، لا مجموع الحياة.
@@ -75,6 +78,7 @@ export default function MineTab({ game }) {
           <div className="flex">
             <span style={{ fontSize: 26 }}>{player.region.emoji}</span>
             <div>
+              <div className="stage-pill">🎬 {t('mine.stage', { n: stageIndex, total: stageTotal })}</div>
               <div className="title">{player.region.name} <span className="tag">×{player.region.mult}</span></div>
               <div className="desc">{player.region.tagline}</div>
               {player.region.specialty && (
