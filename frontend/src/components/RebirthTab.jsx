@@ -16,6 +16,28 @@ function ConditionRow({ ok, label, detail }) {
   );
 }
 
+// بوابة البعث: حلقتان (تعدين الدورة + اليدوي) حول كرة شمسية — تتوهّج عند اكتمال الشروط.
+function Gate({ runPct, manualPct, eligible }) {
+  const R = 62;
+  const C = 2 * Math.PI * R;
+  const R2 = R - 13;
+  const C2 = 2 * Math.PI * R2;
+  const pct = (v) => Math.max(0, Math.min(100, v || 0)) / 100;
+  return (
+    <div className={`gate ${eligible ? 'eligible' : ''}`}>
+      <svg className="gate-ring" viewBox="0 0 148 148" aria-hidden="true">
+        <circle cx="74" cy="74" r={R} fill="none" stroke="color-mix(in srgb, var(--text) 12%, transparent)" strokeWidth="7" />
+        <circle cx="74" cy="74" r={R} fill="none" stroke="var(--gold)" strokeWidth="7" strokeLinecap="round"
+          strokeDasharray={C} strokeDashoffset={C * (1 - pct(runPct))} transform="rotate(-90 74 74)" />
+        <circle cx="74" cy="74" r={R2} fill="none" stroke="color-mix(in srgb, var(--text) 10%, transparent)" strokeWidth="5" />
+        <circle cx="74" cy="74" r={R2} fill="none" stroke="var(--gem)" strokeWidth="5" strokeLinecap="round"
+          strokeDasharray={C2} strokeDashoffset={C2 * (1 - pct(manualPct))} transform="rotate(-90 74 74)" />
+      </svg>
+      <div className="gate-orb">{eligible ? '✨' : '🌅'}</div>
+    </div>
+  );
+}
+
 export default function RebirthTab({ game }) {
   const { player, actions, busy, setModal } = game;
   if (!player?.rebirth || !player?.legacy) return null;
@@ -86,6 +108,7 @@ export default function RebirthTab({ game }) {
       </div>
 
       <div className="card">
+        <Gate runPct={runPct} manualPct={manualPct} eligible={rb.eligible} />
         <div className="between mb8">
           <span className="small">⛏️ {t('rebirth.runMined')}</span>
           <span className="small muted">{short(rb.runMined)} / {short(rb.threshold)}</span>

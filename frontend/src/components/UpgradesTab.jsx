@@ -2,7 +2,7 @@
 import React, { useState } from 'react';
 import { t } from '../i18n.js';
 import { num, short } from '../format.js';
-import { EffectText } from './ui.jsx';
+import { EffectText, LevelPips } from './ui.jsx';
 
 function UpgradeRow({ def, data, player, qty, onBuy, busy }) {
   const maxed = data?.maxed;
@@ -20,7 +20,7 @@ function UpgradeRow({ def, data, player, qty, onBuy, busy }) {
       <div className="grow">
         <div className="title">
           {def.name}
-          <span className="tag">{level}</span>
+          <LevelPips level={level} />
         </div>
         <div className="desc">{def.desc}</div>
         {!maxed && (

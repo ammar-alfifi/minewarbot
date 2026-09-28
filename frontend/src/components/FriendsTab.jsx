@@ -5,6 +5,9 @@ import { num, short, duration, relativeTime } from '../format.js';
 import { Progress } from './ui.jsx';
 import { useTick } from '../hooks/useGame.js';
 import { shareText, copyToClipboard } from '../telegram.js';
+import Podium from './Podium.jsx';
+import EmptyState from './EmptyState.jsx';
+import { IcShare, IcCopy } from './icons.jsx';
 
 function Avatar({ entry }) {
   if (entry.photoUrl) return <span className="lb-avatar"><img src={entry.photoUrl} alt="" loading="lazy" referrerPolicy="no-referrer" /></span>;
@@ -65,14 +68,32 @@ export default function FriendsTab({ game, catalog }) {
     });
   };
 
+  // زر الغارة الموحّد (يُستخدم في القائمة وفي منصة التتويج).
+  const raidButton = (entry) => {
+    if (entry.isMe) return null;
+    const shielded = entry.shieldUntil > now;
+    const protectedNew = Boolean(entry.protected);
+    return (
+      <button
+        className="btn danger small"
+        disabled={busy || shielded || protectedNew || playerProtected || cooldownLeft > 0 || capReached}
+        onClick={() => onRaid(entry)}
+        title={protectedNew ? t('friends.protectedHint') : shielded ? 'الخصم محمي' : ''}
+        aria-label={t('friends.raid')}
+      >
+        ⚔️
+      </button>
+    );
+  };
+
   return (
     <div>
       <div className="card">
         <h3 className="card-title">🎁 {t('friends.invite')}</h3>
         <p className="card-sub">{t('friends.inviteReward', { a: referral.inviterGems ?? 3, b: referral.inviteeGems ?? 2 })}</p>
         <div className="flex mt8" style={{ gap: 8 }}>
-          <button className="btn primary grow" onClick={onShare}>📤 {t('friends.share')}</button>
-          <button className="btn ghost grow" onClick={onCopy}>🔗 {t('friends.copy')}</button>
+          <button className="btn primary grow" onClick={onShare}><IcShare size={16} /> {t('friends.share')}</button>
+          <button className="btn ghost grow" onClick={onCopy}><IcCopy size={16} /> {t('friends.copy')}</button>
         </div>
       </div>
 
@@ -146,12 +167,18 @@ export default function FriendsTab({ game, catalog }) {
             </button>
           ))}
         </div>
-        {board.entries.length === 0 && <p className="muted small center">{t('friends.empty')}</p>}
-        {board.entries.map((entry) => {
+        {board.entries.length === 0 && <EmptyState art="friends" text={t('friends.empty')} compact />}
+        <Podium
+          entries={board.entries}
+          scoreLabel={t('friends.boards.' + (board.scope === 'friends' ? 'friends' : board.scope))}
+          renderAvatar={(entry) => <Avatar entry={entry} />}
+          renderActions={raidButton}
+        />
+        {board.entries.slice(3).map((entry) => {
           const shielded = entry.shieldUntil > now;
           const protectedNew = Boolean(entry.protected);
           return (
-            <div key={entry.playerId} className="lb-row">
+            <div key={entry.playerId} className={`lb-row ${entry.isMe ? 'me' : ''}`}>
               <span className={`lb-rank ${entry.rank <= 3 ? 'top' : ''}`}>
                 {entry.rank === 1 ? '🥇' : entry.rank === 2 ? '🥈' : entry.rank === 3 ? '🥉' : entry.rank}
               </span>
@@ -175,16 +202,7 @@ export default function FriendsTab({ game, catalog }) {
                 {short(entry.score)}
                 <small>{t('friends.boards.' + board.scope)}</small>
               </div>
-              {!entry.isMe && (
-                <button
-                  className="btn danger small"
-                  disabled={busy || shielded || protectedNew || playerProtected || cooldownLeft > 0 || capReached}
-                  onClick={() => onRaid(entry)}
-                  title={protectedNew ? t('friends.protectedHint') : shielded ? 'الخصم محمي' : ''}
-                >
-                  ⚔️
-                </button>
-              )}
+              {raidButton(entry)}
             </div>
           );
         })}
@@ -225,7 +243,7 @@ export default function FriendsTab({ game, catalog }) {
             ))}
           </>
         )}
-        {!raidLog.incoming?.length && !raidLog.outgoing?.length && <p className="muted small">{t('friends.noLog')}</p>}
+        {!raidLog.incoming?.length && !raidLog.outgoing?.length && <EmptyState art="log" text={t('friends.noLog')} compact />}
         <p className="card-sub">
           الغارات حقيقية: عند النجاح تأخذ حتى {Math.round((player.raid.sharePct || 0) * 100)}% من عملات الخصم (بسقف مرتبط بالإنتاج)، وعند الفشل تخسر نسبة من رصيدك (تُلغى في الثأر). الضحية تكسب درعاً وتعويضاً وفرصة ثأر. لا تُسرق الجواهر أو الآثار أبداً.
         </p>

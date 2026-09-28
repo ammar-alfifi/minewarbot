@@ -4,16 +4,72 @@ import { t } from '../i18n.js';
 import { num, short, duration, percent, dateShort } from '../format.js';
 import { Progress } from './ui.jsx';
 import { shareText } from '../telegram.js';
-
-function Sheet({ children, wide = false, onClose }) {
-  return (
-    <div className="overlay" onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}>
-      <div className={`sheet ${wide ? 'wide' : ''}`} role="dialog" aria-modal="true">{children}</div>
-    </div>
-  );
-}
+import Sheet from './Sheet.jsx';
+import { IcSword, IcShield } from './icons.jsx';
 
 const RARITY_ORDER = { legendary: 4, epic: 3, rare: 2, common: 1 };
+
+// نافذة الغارة: تعرض لحظة تلاحم السيوف أثناء تنفيذ الطلب (تغذية راجعة بصرية).
+function RaidSheet({ game, entry, revenge, onClose }) {
+  const { actions, pushToast, refreshBoard, refreshRaidLog, busy, player } = game;
+  const [clashing, setClashing] = React.useState(false);
+  const shielded = (entry.shieldUntil || 0) > Date.now();
+
+  const onGo = async () => {
+    setClashing(true);
+    const started = Date.now();
+    const res = await actions.raid(entry.playerId, Boolean(revenge));
+    const wait = Math.max(0, 650 - (Date.now() - started));
+    if (wait) await new Promise((r) => setTimeout(r, wait));
+    setClashing(false);
+    onClose();
+    if (res) {
+      pushToast(res.result.message, res.result.success ? 'success' : 'error');
+      refreshBoard();
+      refreshRaidLog();
+    }
+  };
+
+  if (clashing) {
+    return (
+      <Sheet>
+        <div className="clash" aria-hidden="true">
+          <span className="clash-sword l">🗡️</span>
+          <span className="clash-spark">💥</span>
+          <span className="clash-sword r">🗡️</span>
+        </div>
+        <div className="head">⚔️ {t('modals.raidTitle', { name: entry.name })}</div>
+        <div className="body">{t('modals.raidClashing')}</div>
+        <button className="btn danger big" disabled>⚔️</button>
+      </Sheet>
+    );
+  }
+
+  return (
+    <Sheet onClose={onClose}>
+      <div className="head">⚔️ {t('modals.raidTitle', { name: entry.name })}</div>
+      <div className="body">{t('friends.raidDetails')}</div>
+      <div className="card tight" style={{ textAlign: 'start' }}>
+        {entry.raidEstimate != null && <div className="small">🎯 {t('friends.estimate')}: <b>{entry.raidEstimate}%</b></div>}
+        {entry.potentialLoot != null && entry.potentialLoot > 0 && (
+          <div className="small mt8">
+            💰 {t('friends.loot')}: <b>{num(entry.potentialLoot)} 🪙</b>
+            {entry.potentialLootSeconds != null && <span className="muted"> · {t('friends.lootMinutes', { m: entry.potentialLootSeconds })}</span>}
+          </div>
+        )}
+        {!revenge && player?.raid?.lossOnFail > 0 && (
+          <div className="small mt8" style={{ color: 'var(--danger, #ef4444)' }}>⚠️ {t('friends.risk')}: <b>{num(player.raid.lossOnFail)} 🪙</b></div>
+        )}
+        {entry.protected && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ {t('friends.protectedHint')}</div>}
+        {shielded && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ الخصم محمي — لا يمكن الهجوم الآن.</div>}
+      </div>
+      <div className="flex" style={{ gap: 8 }}>
+        <button className="btn ghost grow" onClick={onClose}>{t('modals.cancel')}</button>
+        <button className="btn danger grow" disabled={busy || shielded || entry.protected || player?.raid?.protected} onClick={onGo}><IcSword size={16} /> {t('modals.raidGo')}</button>
+      </div>
+    </Sheet>
+  );
+}
 
 export default function Modals({ game, catalog, onStartTour }) {
   const { modal, setModal, player, actions, pushToast, refreshBoard, refreshRaidLog, busy } = game;
@@ -128,40 +184,7 @@ export default function Modals({ game, catalog, onStartTour }) {
 
   if (modal.type === 'raid') {
     const { entry, revenge } = modal.payload;
-    const shielded = (entry.shieldUntil || 0) > Date.now();
-    const onGo = async () => {
-      close();
-      const res = await actions.raid(entry.playerId, Boolean(revenge));
-      if (res) {
-        pushToast(res.result.message, res.result.success ? 'success' : 'error');
-        refreshBoard();
-        refreshRaidLog();
-      }
-    };
-    return (
-      <Sheet onClose={close}>
-        <div className="head">⚔️ {t('modals.raidTitle', { name: entry.name })}</div>
-        <div className="body">{t('friends.raidDetails')}</div>
-        <div className="card tight" style={{ textAlign: 'start' }}>
-          {entry.raidEstimate != null && <div className="small">🎯 {t('friends.estimate')}: <b>{entry.raidEstimate}%</b></div>}
-          {entry.potentialLoot != null && entry.potentialLoot > 0 && (
-            <div className="small mt8">
-              💰 {t('friends.loot')}: <b>{num(entry.potentialLoot)} 🪙</b>
-              {entry.potentialLootSeconds != null && <span className="muted"> · {t('friends.lootMinutes', { m: entry.potentialLootSeconds })}</span>}
-            </div>
-          )}
-          {!revenge && player?.raid?.lossOnFail > 0 && (
-            <div className="small mt8" style={{ color: 'var(--danger, #ef4444)' }}>⚠️ {t('friends.risk')}: <b>{num(player.raid.lossOnFail)} 🪙</b></div>
-          )}
-          {entry.protected && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ {t('friends.protectedHint')}</div>}
-          {shielded && <div className="small mt8" style={{ color: 'var(--success)' }}>🛡️ الخصم محمي — لا يمكن الهجوم الآن.</div>}
-        </div>
-        <div className="flex" style={{ gap: 8 }}>
-          <button className="btn ghost grow" onClick={close}>{t('modals.cancel')}</button>
-          <button className="btn danger grow" disabled={busy || shielded || entry.protected || player?.raid?.protected} onClick={onGo}>{t('modals.raidGo')}</button>
-        </div>
-      </Sheet>
-    );
+    return <RaidSheet game={game} entry={entry} revenge={revenge} onClose={close} />;
   }
 
   if (modal.type === 'rebirth') {

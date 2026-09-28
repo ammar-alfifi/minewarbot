@@ -161,6 +161,7 @@ const ar = {
     share: 'شارك الاكتشاف',
     raidTitle: 'غارة على {name}',
     raidGo: 'هجوم!',
+    raidClashing: 'السيوف تتلاحم… ننتظر النتيجة',
     cancel: 'إلغاء',
     confirm: 'تأكيد',
     logout: 'تسجيل الخروج',
