@@ -723,12 +723,13 @@ test('البعث يعيد تأسيس المنجم ويحوّل الإنجاز إ
   assert.equal(res.result.cores, 1);
   assert.equal(res.result.rebirths, 1);
   assert.equal(res.player.coins, 0, 'يُصفّر رصيد الدورة');
-  assert.equal(res.player.workers, 1, 'بداية متقدّمة: عامل واحد بعد أول بعث');
-  assert.equal(res.player.equipment.pickaxe, 2, 'بداية متقدّمة: معول مستوى 2 بعد أول بعث');
-  assert.deepEqual(res.result.headStart, { pickaxe: 2, workers: 1 });
+  assert.equal(res.player.workers, 8, 'بداية متقدّمة: ثمانية عمّال بعد أول بعث');
+  assert.equal(res.player.equipment.pickaxe, 4, 'بداية متقدّمة: معول مستوى 4 بعد أول بعث');
+  assert.deepEqual(res.result.headStart, { pickaxe: 4, workers: 8 });
   assert.deepEqual(res.player.regionsUnlocked, ['surface']);
   assert.equal(res.player.rebirth.runMined, 0);
-  assert.equal(res.player.rebirth.threshold, 150_000_000, 'العتبة التالية ×3');
+  assert.equal(res.player.rebirth.threshold, 125_000_000, 'العتبة التالية ×2.5');
+  assert.ok(Math.abs(res.player.rebirth.multiplier - 1.4) < 1e-9, 'قوة البعث الدائمة +40% بعد أول بعث');
   assert.equal(res.player.legacy.cores, 1, 'نواة واحدة عند 1× العتبة');
   // ما يبقى دائمًا
   assert.equal(res.player.gems, 40);
@@ -741,14 +742,16 @@ test('البعث يعيد تأسيس المنجم ويحوّل الإنجاز إ
   assert.equal(replay.replayed, true, 'لا يُنفَّذ البعث مرتين لنفس الطلب');
 });
 
-test('بداية الدورة تتدرّج مع عدد البعثات وتُسقَف بنصف شروط البعث', async () => {
+test('بداية الدورة تتدرّج مع عدد البعثات وتُسقَف دون الحد الأقصى للترقيات', async () => {
   const { engine, store } = setup();
   await engine.session(who('tg_1'));
-  // الحالة تعرض البداية المتقدّمة للدورة القادمة.
+  // الحالة تعرض البداية المتقدّمة للدورة القادمة (بعد أول بعث): معول 4 و8 عمّال.
   let st = await engine.getState('tg_1');
-  assert.deepEqual(st.player.rebirth.headStart, { pickaxe: 2, workers: 1 }, 'البداية القادمة بعد أول بعث');
+  assert.deepEqual(st.player.rebirth.headStart, { pickaxe: 4, workers: 8 }, 'البداية القادمة بعد أول بعث');
+  assert.equal(st.player.rebirth.multiplier, 1, 'قوة البعث عند صفر بعث = 1');
+  assert.ok(Math.abs(st.player.rebirth.nextMultiplier - 1.4) < 1e-9, 'البعث القادم يرفع القوة إلى 1.4');
 
-  // بعث رقم 4: معول 5 وعمّال 4 (المعادلة 1+عدد البعثات).
+  // بعث رقم 4 (العدّاد 3): البداية المعروضة للدورة القادمة = 1+3×4 = 13 معول و8×4 = 32 عامل.
   await store.mutate((doc) => {
     const p = doc.players.tg_1;
     p.rebirthCount = 3;
@@ -757,13 +760,14 @@ test('بداية الدورة تتدرّج مع عدد البعثات وتُسق
     p.runMined = rebirthThreshold(3); p.runManualMined = manualRequirement(rebirthThreshold(3));
   });
   st = await engine.getState('tg_1');
-  assert.deepEqual(st.player.rebirth.headStart, { pickaxe: 5, workers: 4 }, 'التدرّج حسب عدد البعثات');
+  assert.deepEqual(st.player.rebirth.headStart, { pickaxe: 13, workers: 32 }, 'التدرّج حسب عدد البعثات');
   const reb = await engine.rebirth('tg_1', 'req_head01');
-  assert.equal(reb.player.equipment.pickaxe, 5);
-  assert.equal(reb.player.workers, 4);
+  assert.equal(reb.player.equipment.pickaxe, 13);
+  assert.equal(reb.player.workers, 32);
   assert.equal(reb.player.rebirth.count, 4);
+  assert.ok(Math.abs(reb.player.rebirth.multiplier - 2.6) < 1e-9, 'بعد أربعة بعثات: 1 + 0.4×4');
 
-  // عدد كبير جدًا: يتوقف عند السقف (نصف شروط البعث: 10 و5).
+  // عدد كبير جدًا: يتوقف عند السقف (معول 45 وعمّال 150) دون بلوغ الحد الأقصى للترقيات.
   await store.mutate((doc) => {
     const p = doc.players.tg_1;
     p.rebirthCount = 20;
@@ -772,8 +776,27 @@ test('بداية الدورة تتدرّج مع عدد البعثات وتُسق
     p.runMined = rebirthThreshold(20); p.runManualMined = manualRequirement(rebirthThreshold(20));
   });
   const capped = await engine.rebirth('tg_1', 'req_head02');
-  assert.equal(capped.player.equipment.pickaxe, 10, 'سقف المعول = نصف الشرط');
-  assert.equal(capped.player.workers, 5, 'سقف العمّال = نصف الشرط');
+  assert.equal(capped.player.equipment.pickaxe, REBIRTH.headStart.maxPickaxe, 'سقف المعول');
+  assert.equal(capped.player.workers, REBIRTH.headStart.maxWorkers, 'سقف العمّال');
+});
+
+test('قوة البعث الدائمة تنعكس على الدخل في حالة اللاعب', async () => {
+  const { engine, store } = setup();
+  await engine.session(who('tg_1'));
+  await store.mutate((doc) => {
+    const p = doc.players.tg_1;
+    p.equipment.pickaxe = 10;
+    p.workers = 20;
+  });
+  const st0 = await engine.getState('tg_1');
+  assert.equal(st0.player.rebirth.multiplier, 1, 'صفر بعث = بلا مضاعف');
+  const before = st0.player.power.idlePerSec;
+  assert.ok(before > 0, 'لدى اللاعب دخل خامل');
+  // أربع بعثات = قوة دائمة 2.6×: يجب أن يرتفع الدخل الخامل بالنسبة نفسها.
+  await store.mutate((doc) => { doc.players.tg_1.rebirthCount = 4; });
+  const st4 = await engine.getState('tg_1');
+  assert.ok(Math.abs(st4.player.rebirth.multiplier - 2.6) < 1e-9);
+  assert.ok(Math.abs(st4.player.power.idlePerSec / before - 2.6) < 1e-9, 'الدخل الخامل يتضاعف بقوة البعث');
 });
 
 test('البعث يُرفض إذا نقص التعدين اليدوي (الدخل الخامل لا يكفي)', async () => {
@@ -807,8 +830,8 @@ test('حالة البعث تعرض عدد المناطق والعتبة القا
 test('شرط التعدين اليدوي يتصاعد مع عتبة الدورة ويبقى نسبة ثابتة', async () => {
   // الدورة الأولى: الحد الأدنى المطلق (10M = 20% من 50M).
   assert.equal(manualRequirement(rebirthThreshold(0)), REBIRTH.manualThreshold);
-  // الدورة الثانية: 20% من 150M = 30M، أكبر من الحد الأدنى.
-  assert.equal(manualRequirement(rebirthThreshold(1)), 30_000_000);
+  // الدورة الثانية: 20% من 125M = 25M، أكبر من الحد الأدنى.
+  assert.equal(manualRequirement(rebirthThreshold(1)), 25_000_000);
   // الشرط يبقى دائماً 20% على الأقل من العتبة المتصاعدة.
   for (let c = 0; c < 8; c++) {
     const th = rebirthThreshold(c);
@@ -821,7 +844,7 @@ test('شرط التعدين اليدوي يتصاعد مع عتبة الدورة
 });
 
 test('عتبات البعث لا تتجاوز سقف العدّاد فتبقى الدورات قابلة للإنجاز', async () => {
-  // العتبة تنمو ×3 والسقف 10^18: يجب أن تبقى دورة 11 (الحالية) ممكنة، وأن تسمح بأكثر من 15 دورة.
+  // العتبة تنمو ×2.5 والسقف 10^18: يجب أن تبقى دورة 11 (الحالية) ممكنة، وأن تسمح بأكثر من 15 دورة.
   assert.ok(rebirthThreshold(10) <= RUN_MINED_CAP, 'الدورة الحادية عشرة قابلة للإنجاز');
   assert.ok(rebirthThreshold(15) <= RUN_MINED_CAP, 'يوجد مجال لأكثر من 15 دورة');
   // مكافأة النوى الثلاث متاحة عند 4× العتبة في كل هذه الدورات.

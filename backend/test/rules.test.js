@@ -9,7 +9,7 @@ import {
   rebirthThreshold, rebirthCores, rebirthConditions, legacyBonus, groupChestStatus,
   seasonRewardFor, regionOutputBonus, legacyRanks, SEASON_REWARDS, GROUP_GOAL, REBIRTH,
   cycleGoalProgress, CYCLE_GOALS, rebirthBadge, REBIRTH_BADGES, manualRequirement, RUN_MINED_CAP,
-  rebirthHeadStart,
+  rebirthHeadStart, rebirthMultiplier, EQUIPMENT, WORKER,
 } from '../src/game/rules.js';
 
 const basePlayer = (over = {}) => ({
@@ -140,7 +140,7 @@ test('مكافأة اليوم السابع: جواهر مرة كل أسبوع، 
   assert.equal(weekly.reward.gems, 5);
 });
 
-test('عتبات البعث تتصاعد ×3 ومكافأة النوى عند 1× و2× و4×', () => {
+test('عتبات البعث تتصاعد وفق المضاعف ومكافأة النوى عند 1× و2× و4×', () => {
   assert.equal(rebirthThreshold(0), REBIRTH.baseThreshold);
   assert.equal(rebirthThreshold(1), REBIRTH.baseThreshold * REBIRTH.thresholdMult);
   assert.equal(rebirthCores(0, 100), 0);
@@ -242,17 +242,35 @@ test('أهداف الدورة تعتمد تقدّم الدورة فقط ولا �
   }
 });
 
-test('بداية الدورة الجديدة تتدرّج مع عدد البعثات وتُسقَف بنصف شروط البعث', () => {
-  // أول بعث: معول 2 وعامل واحد (لا صفر تام).
+test('بداية الدورة الجديدة تتدرّج مع عدد البعثات وتُسقَف دون الحد الأقصى للترقيات', () => {
+  // صفر بعث: من الصفر. أول بعث: معول 4 وثمانية عمّال (لا صفر تام).
   assert.deepEqual(rebirthHeadStart(0), { pickaxe: 1, workers: 0 });
-  assert.deepEqual(rebirthHeadStart(1), { pickaxe: 2, workers: 1 });
-  // السقف = نصف شروط البعث (معول 10 وعمّال 5) فلا يتجاوزها مهما كثر البعث.
-  assert.deepEqual(rebirthHeadStart(9), { pickaxe: REBIRTH.headStart.maxPickaxe, workers: 5 });
+  assert.deepEqual(rebirthHeadStart(1), { pickaxe: 4, workers: 8 });
+  // التدرّج خطّي في البدايات الأولى
+  assert.deepEqual(rebirthHeadStart(2), { pickaxe: 7, workers: 16 });
+  // عند عدد كبير يتوقف عند السقف المعلن
   assert.equal(rebirthHeadStart(99).pickaxe, REBIRTH.headStart.maxPickaxe);
   assert.equal(rebirthHeadStart(99).workers, REBIRTH.headStart.maxWorkers);
-  // لا تتجاوز شروط البعث الأدنى (تُبقي للاعب شيئًا يبنيه).
-  assert.ok(rebirthHeadStart(99).pickaxe <= REBIRTH.minPickaxe);
-  assert.ok(rebirthHeadStart(99).workers <= REBIRTH.minWorkers);
+  // السقف يبقى دون الحد الأقصى للترقيات فلا تختفي الحاجة للترقية
+  assert.ok(REBIRTH.headStart.maxPickaxe < EQUIPMENT.pickaxe.maxLevel, 'يوجد متّسع لترقية المعول');
+  assert.ok(REBIRTH.headStart.maxWorkers < WORKER.maxCount, 'يوجد متّسع لتوظيف عمّال');
+  // البدء يتجاوز الحد الأدنى لشروط البعث بعد بضع دورات (إعادة البناء تختفي تدريجياً)
+  assert.ok(rebirthHeadStart(10).pickaxe >= REBIRTH.minPickaxe);
+  assert.ok(rebirthHeadStart(2).workers >= REBIRTH.minWorkers);
+});
+
+test('قوة البعث الدائمة تتراكم بلا سقف وتُطبَّق على الدخل اليدوي والخامل', () => {
+  assert.equal(rebirthMultiplier(0), 1);
+  assert.ok(Math.abs(rebirthMultiplier(1) - 1.4) < 1e-9);
+  assert.ok(Math.abs(rebirthMultiplier(5) - 3.0) < 1e-9);
+  assert.equal(rebirthMultiplier(-3), 1, 'القيم غير الصحيحة تُعامل كصفر بعث');
+  // بلا سقف: تستمر في النمو مع كل بعث
+  assert.ok(rebirthMultiplier(50) > rebirthMultiplier(49));
+  // تُطبَّق فعلاً على دخل التعدين اليدوي والخامل معاً
+  const withPower = powerOf(basePlayer({ rebirthCount: 4 }), 0);
+  const noPower = powerOf(basePlayer({ rebirthCount: 0 }), 0);
+  assert.ok(Math.abs(withPower.manual / noPower.manual - rebirthMultiplier(4)) < 1e-9);
+  assert.ok(Math.abs(withPower.workerEach / noPower.workerEach - rebirthMultiplier(4)) < 1e-9);
 });
 
 test('أوسمة البعث تصعد مع عدد الدورات وتُسقِف عند الأعلى', () => {
