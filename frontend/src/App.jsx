@@ -12,6 +12,8 @@ import RebirthTab from './components/RebirthTab.jsx';
 import Modals from './components/Modals.jsx';
 import CosmeticSheet from './components/Cosmetics.jsx';
 import Tutorial from './components/Tutorial.jsx';
+import SceneLayer from './components/SceneLayer.jsx';
+import { sceneFor } from './scenes.js';
 
 export default function App() {
   const game = useGame();
@@ -61,10 +63,17 @@ export default function App() {
         <div className="topbar">
           <div className="topbar-row">
             <div className="topbar-title">⛏️ {t('appName')}</div>
+            <div className="skeleton" style={{ width: 68, height: 24, borderRadius: 999 }} />
+            <div className="skeleton" style={{ width: 68, height: 24, borderRadius: 999 }} />
           </div>
         </div>
-        <div className="card"><div className="skeleton" style={{ width: '60%' }} /><div className="skeleton" /></div>
-        <div className="card"><div className="skeleton" style={{ height: 120 }} /></div>
+        <div className="mine-stage">
+          <div className="skeleton" style={{ width: 190, height: 190, borderRadius: '50%' }} />
+        </div>
+        <div className="stat-grid mt12">
+          {[0, 1, 2].map((i) => <div key={i} className="skeleton" style={{ height: 52, borderRadius: 12 }} />)}
+        </div>
+        <div className="card mt12"><div className="skeleton" style={{ width: '60%' }} /><div className="skeleton" /></div>
         <div className="center mt12"><span className="spinner" /></div>
         <p className="muted small center mt8">{t('common.loading')}</p>
       </div>
@@ -86,12 +95,16 @@ export default function App() {
   }
 
   const regionTheme = game.player?.region?.theme;
+  const scene = sceneFor(game.player?.region?.id);
+  const appVars = {
+    ...(regionTheme ? { '--region-from': regionTheme.from, '--region-to': regionTheme.to } : {}),
+    '--scene-accent': scene.accent,
+    '--scene-accent2': scene.accent2,
+  };
 
   return (
-    <div
-      className="app"
-      style={regionTheme ? { '--region-from': regionTheme.from, '--region-to': regionTheme.to } : undefined}
-    >
+    <div className="app" style={appVars}>
+      <SceneLayer scene={scene} />
       <Header
         game={game}
         onHelp={() => game.setModal({ type: 'help' })}
@@ -103,11 +116,13 @@ export default function App() {
         }}
       />
 
-      {tab === 'mine' && <MineTab game={game} />}
-      {tab === 'upgrades' && <UpgradesTab game={game} catalog={game.catalog} />}
-      {tab === 'friends' && <FriendsTab game={game} catalog={game.catalog} />}
-      {tab === 'collection' && <CollectionTab game={game} catalog={game.catalog} />}
-      {tab === 'rebirth' && <RebirthTab game={game} />}
+      <div className="tab-screen" key={tab}>
+        {tab === 'mine' && <MineTab game={game} />}
+        {tab === 'upgrades' && <UpgradesTab game={game} catalog={game.catalog} />}
+        {tab === 'friends' && <FriendsTab game={game} catalog={game.catalog} />}
+        {tab === 'collection' && <CollectionTab game={game} catalog={game.catalog} />}
+        {tab === 'rebirth' && <RebirthTab game={game} />}
+      </div>
 
       <TabBar tab={tab} setTab={setTab} badges={badges} />
 

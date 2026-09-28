@@ -3,6 +3,9 @@ import React from 'react';
 import { t } from '../i18n.js';
 import { num, short, duration } from '../format.js';
 import { useTick } from '../hooks/useGame.js';
+import { IcCoin, IcGem, IcHelp, IcBolt, IcShield } from './icons.jsx';
+import CountUp from './CountUp.jsx';
+import RingTimer from './RingTimer.jsx';
 
 export default function Header({ game, onHelp, onOpenTab, onEditName }) {
   const { player, catalog, mode, displayCoins, displayGems } = game;
@@ -16,9 +19,9 @@ export default function Header({ game, onHelp, onOpenTab, onEditName }) {
           <span>⛏️</span>
           <span>{t('appName')}</span>
         </div>
-        <span className="chip gold" title={num(displayCoins)}>🪙 {short(displayCoins)}</span>
-        <span className="chip gem" title={num(displayGems)}>💎 {short(displayGems)}</span>
-        <button className="icon-btn" onClick={onHelp} aria-label={t('header.help')} title={t('header.help')}>؟</button>
+        <span className="chip gold" title={num(displayCoins)}><IcCoin size={15} /> {short(displayCoins)}</span>
+        <span className="chip gem" title={num(displayGems)}><IcGem size={15} /> <CountUp value={displayGems} format={short} /></span>
+        <button className="icon-btn" onClick={onHelp} aria-label={t('header.help')} title={t('header.help')}><IcHelp size={18} /></button>
       </div>
       <div className="topbar-row mt8" style={{ gap: 6, flexWrap: 'wrap' }}>
         <button className="chip ghost tiny" onClick={() => onOpenTab('mine')} style={{ cursor: 'pointer' }}>
@@ -26,8 +29,18 @@ export default function Header({ game, onHelp, onOpenTab, onEditName }) {
         </button>
         <span className="chip ghost tiny">⚡ {short(player.power.manual)} {t('header.power')}</span>
         <span className="chip ghost tiny">🤖 {short(player.power.idlePerSec)} {t('header.idle')}</span>
-        {boostLeft > 0 && <span className="chip tiny" style={{ color: 'var(--gem)' }}>⚡ ×2 {duration(boostLeft)}</span>}
-        {shieldLeft > 0 && <span className="chip tiny" style={{ color: 'var(--success)' }}>🛡️ {duration(shieldLeft)}</span>}
+        {boostLeft > 0 && (
+          <span className="chip tiny ring" style={{ color: 'var(--gem)' }}>
+            <RingTimer size={22} stroke={2.5} color="var(--gem)" label={t('header.boost')}><IcBolt size={11} /></RingTimer>
+            ×2 {duration(boostLeft)}
+          </span>
+        )}
+        {shieldLeft > 0 && (
+          <span className="chip tiny ring" style={{ color: 'var(--success)' }}>
+            <RingTimer size={22} stroke={2.5} color="var(--success)" label={t('header.shield')}><IcShield size={11} /></RingTimer>
+            {duration(shieldLeft)}
+          </span>
+        )}
       </div>
       {mode === 'guest' && (
         <div className="guest-banner">

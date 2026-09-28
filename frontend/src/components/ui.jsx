@@ -45,3 +45,34 @@ export function RarityBadge({ rarity, rarities }) {
   if (!def) return null;
   return <span className="tag" style={{ color: def.color, borderColor: `${def.color}88` }}>{def.emoji} {def.name}</span>;
 }
+
+/** نقاط مستوى بصرية: حتى 10 نقاط، ثم رقم مختصر للأعلى. */
+export function LevelPips({ level = 0, max = 10 }) {
+  if (!level) return null;
+  if (level > max) return <span className="pips" aria-label={`${level}`}><span className="pips-num">×{level}</span></span>;
+  return (
+    <span className="pips" aria-label={`${level}`}>
+      {Array.from({ length: max }).map((_, i) => <i key={i} className={i < level ? 'on' : ''} />)}
+    </span>
+  );
+}
+
+/** شريط سلسلة الزيارات (7 أيام) — يعتمد على visit.streak من السيرفر. */
+export function StreakStrip({ streak = 0, ready = false, label = '' }) {
+  const done = Math.max(0, Math.min(7, streak || 0));
+  const today = Math.min(7, done + 1);
+  return (
+    <div className="streak" role="img" aria-label={label} title={label}>
+      {Array.from({ length: 7 }).map((_, i) => {
+        const n = i + 1;
+        const isDone = n <= done;
+        const isToday = ready && n === today;
+        return (
+          <span key={n} className={`streak-day ${isDone ? 'done' : ''} ${isToday ? 'today' : ''}`}>
+            {isDone ? '✓' : n}
+          </span>
+        );
+      })}
+    </div>
+  );
+}

@@ -5,6 +5,7 @@ import { num, short, percent, dateShort } from '../format.js';
 import { Progress, Stat } from './ui.jsx';
 import { duration } from '../format.js';
 import { useTick } from '../hooks/useGame.js';
+import EmptyState from './EmptyState.jsx';
 
 export default function CollectionTab({ game, catalog }) {
   const { player, actions, busy, pushToast, setModal } = game;
@@ -131,7 +132,7 @@ export default function CollectionTab({ game, catalog }) {
 
       <div className="card" data-tour="relics">
         <h3 className="card-title">🏺 {t('collection.relics')}</h3>
-        {player.relics.length === 0 && <p className="muted small">{t('collection.empty')}</p>}
+        {player.relics.length === 0 && <EmptyState art="relics" text={t('collection.empty')} compact />}
         {catalog.regions.map((region) => {
           const regionRelics = region.relics.map((id) => catalog.relics.find((r) => r.id === id)).filter(Boolean);
           const foundHere = regionRelics.filter((r) => owned[r.id]).length;
