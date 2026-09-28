@@ -678,7 +678,11 @@ export const REBIRTH = {
   emoji: '🌅',
   baseThreshold: 50_000_000,       // تعدين الدورة الأولى
   manualThreshold: 10_000_000,     // الحد الأدنى المطلق للتعدين اليدوي
-  manualShare: 0.2,                // وكحد أدنى: 20% من عتبة الدورة (يحفظ معنى الشرط مع تصاعد العتبات)
+  manualShare: 0.2,                // النسبة الأساسية من عتبة الدورة
+  // سقف قابلية التحقيق: مهما تصاعدت العتبة هندسياً، لا يتجاوز الشرط اليدوي ما
+  // يمكن إنجازه فعلاً بعدد نقرات مستهدف بقوة اللاعب الحالية، فلا يتحوّل الشرط
+  // إلى جدار مستحيل في الدورات المتقدّمة (النسبة وحدها تكفي لدورات البداية).
+  manualTapsTarget: 4_000,
   thresholdMult: 2.5,              // كل دورة = ×2.5 (تصاعد معتدل يبقى قابلاً للإنجاز مع قوة البعث الدائمة)
   minPickaxe: 20,
   minWorkers: 10,
@@ -700,11 +704,24 @@ export function rebirthThreshold(cycles) {
 }
 
 /**
- * شرط التعدين اليدوي النشط للدورة: نسبة من عتبة الدورة بحد أدنى مطلق.
- * يمنع أن يصبح الدخل الخامل وحده كافياً في الدورات المتأخرة.
+ * النسبة الأساسية لشرط التعدين اليدوي: نسبة من عتبة الدورة بحد أدنى مطلق.
+ * يمنع أن يصبح الدخل الخامل وحده كافياً. تُطبَّق عليه بعد ذلك سقف قابلية
+ * التحقيق في rebirthConditions (كي لا يصير جداراً مستحيلاً في الدورات المتأخرة).
  */
 export function manualRequirement(threshold) {
   return Math.max(REBIRTH.manualThreshold, Math.floor(threshold * REBIRTH.manualShare));
+}
+
+/**
+ * تقدير قوة التعدين اليدوي للاعب (بلا حماسة) لضبط سقف الشرط اليدوي.
+ * يتحمّل كائنات لاعب ناقصة (اختبارات/ترحيل) فيرجع 0 عند تعذّر الحساب.
+ */
+function manualPowerEstimate(player, now = Date.now()) {
+  try {
+    return powerOf({ ...player, boostUntil: 0 }, now).manual || 0;
+  } catch {
+    return 0;
+  }
 }
 
 /** مكافأة النوى: 1 عند العتبة، 2 عند 2×، 3 عند 4× — بسقف 3. */
@@ -744,7 +761,12 @@ export const RUN_MINED_CAP = 1e18;
 /** شروط أهلية البعث للدورة الحالية. */
 export function rebirthConditions(player) {
   const threshold = rebirthThreshold(player.rebirthCount || 0);
-  const manualThreshold = manualRequirement(threshold);
+  const shareThreshold = manualRequirement(threshold);
+  // سقف قابلية التحقيق: لا يتجاوز الشرط اليدوي ما يستطيع اللاعب إنجازه فعلاً
+  // بعدد نقرات مستهدف بقوته الحالية — فيبقى الشرط ذا معنى بلا جدار مستحيل.
+  const power = manualPowerEstimate(player);
+  const achievable = power > 0 ? Math.max(1, Math.floor(power * REBIRTH.manualTapsTarget)) : Infinity;
+  const manualThreshold = Math.min(shareThreshold, achievable);
   // نعدّ المناطق الفريدة الصالحة فقط، فلا يخدع التكرار/المعرّفات القديمة شرط «كل المناطق».
   const regionsSet = new Set((player.regionsUnlocked || []).filter((r) => REGIONS.some((x) => x.id === r)));
   const allRegions = regionsSet.size >= REGIONS.length;
@@ -758,6 +780,8 @@ export function rebirthConditions(player) {
   return {
     threshold,
     manualThreshold,
+    shareManualThreshold: shareThreshold,
+    manualTapsTarget: REBIRTH.manualTapsTarget,
     conditions: cond,
     eligible: Object.values(cond).every(Boolean),
     cores: rebirthCores(player.runMined, threshold),

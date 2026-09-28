@@ -663,6 +663,8 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
           runManualMined: p.runManualMined,
           runRelics: p.runRelics,
           manualThreshold: st.manualThreshold,
+          shareManualThreshold: st.shareManualThreshold,
+          manualTapsTarget: st.manualTapsTarget,
           manualBaseThreshold: REBIRTH.manualThreshold,
           manualShare: REBIRTH.manualShare,
           minPickaxe: REBIRTH.minPickaxe,
@@ -769,7 +771,7 @@ export function createEngine({ store, botUsername = 'MineWarrBot', now = () => D
       rebirthRules: {
         name: REBIRTH.name, emoji: REBIRTH.emoji,
         baseThreshold: REBIRTH.baseThreshold, manualThreshold: REBIRTH.manualThreshold,
-        manualShare: REBIRTH.manualShare,
+        manualShare: REBIRTH.manualShare, manualTapsTarget: REBIRTH.manualTapsTarget,
         thresholdMult: REBIRTH.thresholdMult, minPickaxe: REBIRTH.minPickaxe,
         minWorkers: REBIRTH.minWorkers, maxCores: REBIRTH.maxCores,
         powerPerRebirth: REBIRTH.powerPerRebirth,

@@ -119,6 +119,9 @@ export default function RebirthTab({ game }) {
           <span className="small muted">{short(rb.runManualMined)} / {short(rb.manualThreshold)}</span>
         </div>
         <Progress value={manualPct} max={100} />
+        {rb.manualTapsTarget > 0 && (
+          <p className="muted small mt8">{t('rebirth.manualCapHint', { n: num(rb.manualTapsTarget) })}</p>
+        )}
       </div>
 
       <div className="card">

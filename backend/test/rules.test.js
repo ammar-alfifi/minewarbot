@@ -199,6 +199,33 @@ test('شروط البعث: كل شرط عند الحدّ بالضبط يستوف
   assert.equal(rebirthConditions({ ...ready(), rebirthCount: 1 }).threshold, REBIRTH.baseThreshold * REBIRTH.thresholdMult);
 });
 
+test('شرط التعدين اليدوي يبقى قابلاً للتحقيق مهما تصاعدت الدورات (سقف النقرات)', () => {
+  const maxed = (n) => ({
+    rebirthCount: n, runMined: 0, runManualMined: 0,
+    regionsUnlocked: REGIONS.map((r) => r.id),
+    equipment: { pickaxe: 50, lamp: 20, helmet: 20 },
+    facilities: { cart: 30, smelter: 30, storage: 4 },
+    workers: 200, regionId: 'abyss',
+    legacy: { vein_memory: 4, digger_hand: 4, lineage_vault: 2 },
+    boostUntil: 0,
+  });
+  for (let n = 0; n <= 15; n++) {
+    const p = maxed(n);
+    const st = rebirthConditions(p);
+    const th = rebirthThreshold(n);
+    assert.ok(st.manualThreshold > 0, `الدورة ${n}: الشرط يجب أن يكون موجباً`);
+    assert.ok(st.manualThreshold <= manualRequirement(th), `الدورة ${n}: لا يتجاوز النسبة الأساسية أبداً`);
+    const power = powerOf(p, Date.now()).manual;
+    const taps = st.manualThreshold / power;
+    assert.ok(taps <= REBIRTH.manualTapsTarget + 1, `الدورة ${n}: ${Math.round(taps)} نقرة تتجاوز سقف ${REBIRTH.manualTapsTarget}`);
+  }
+  // الدورات الأولى بقوة كاملة تبقى عند النسبة الأصلية بلا تغيير في التصميم
+  assert.equal(rebirthConditions(maxed(0)).manualThreshold, manualRequirement(rebirthThreshold(0)));
+  // الشرط يبقى فعّالاً: الدخل الخامل وحده (بلا نقر يدوي) لا يؤهّل
+  const idleOnly = { ...maxed(0), runMined: rebirthThreshold(0), runManualMined: 0 };
+  assert.equal(rebirthConditions(idleOnly).conditions.manual, false);
+});
+
 test('تخصصات المناطق تغيّر العائد ولا تجمع كل المكافآت في الأعمق', () => {
   // منطقة يدوية ومنطقة عمالية تعطيان مكافأتين مختلفتين
   assert.ok(regionOutputBonus('iron', 'manual') > 0);
